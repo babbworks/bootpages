@@ -1,0 +1,536 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bootpages</title>
+
+<!--
+  The editor.
+
+  Ultra simple on purpose: a title, a byline, and a column of blocks. The
+  only chrome is a plus in the left margin of whichever block has focus,
+  which opens the list of things a block can be.
+
+  No framework, no build step, no dependencies. A block is a textarea, the
+  document is an array, and publishing is one POST. When capability pages
+  arrive, the block menu is where a site's declared modules appear - it is
+  already a list built from data rather than hardcoded markup.
+-->
+
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --faint: #b4b4b4;
+    --line: #ebebeb;
+    --accent: #2b6cb0;
+    --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #e8e8e8; --faint: #6a6a6a; --line: #2a2a2a; }
+    body { background: #141414; }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: var(--serif);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+
+  main {
+    max-width: 40rem;
+    margin: 0 auto;
+    padding: 4rem 1.5rem 12rem 1.5rem;
+  }
+
+  /* Every field is a textarea that grows, so nothing ever scrolls inside
+     itself and the page reads as one continuous document. */
+  textarea {
+    display: block;
+    width: 100%;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    resize: none;
+    overflow: hidden;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
+  }
+
+  textarea:focus { outline: none; }
+  textarea::placeholder { color: var(--faint); }
+
+  #title textarea { font-size: 2.4rem; line-height: 1.2; font-weight: 700; }
+  #byline textarea { font-family: var(--sans); font-size: .95rem; color: var(--faint); }
+  #byline { margin: .75rem 0 2.5rem 0; }
+
+  /* --- blocks ------------------------------------------------------- */
+
+  .block { position: relative; margin: 0 0 1.1rem 0; }
+
+  /* The left margin affordance. Present only on the block with focus, so
+     the page is otherwise completely bare. */
+  .plus {
+    position: absolute;
+    left: -2.25rem;
+    top: -0.1rem;
+    width: 1.7rem;
+    height: 1.7rem;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: transparent;
+    color: var(--faint);
+    font: 1.1rem/1 var(--sans);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .12s;
+  }
+
+  .block:focus-within .plus, .block:hover .plus { opacity: 1; }
+  .plus:hover { color: var(--ink); border-color: var(--faint); }
+
+  .block[data-type="h3"] textarea { font-size: 1.5rem; font-weight: 700; }
+  .block[data-type="h4"] textarea { font-size: 1.15rem; font-weight: 700; }
+
+  .block[data-type="blockquote"] {
+    border-left: 3px solid var(--line);
+    padding-left: 1rem;
+    font-style: italic;
+  }
+
+  .block[data-type="pre"] textarea {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: .9rem;
+    background: rgba(128, 128, 128, .08);
+    padding: .8rem 1rem;
+    border-radius: 4px;
+  }
+
+  .block[data-type="li"] textarea { padding-left: 1.2rem; }
+  .block[data-type="li"]::before {
+    content: "•";
+    position: absolute;
+    left: .25rem;
+    color: var(--faint);
+  }
+
+  .block[data-type="img"] textarea,
+  .block[data-type="table"] textarea {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: .85rem;
+    color: var(--accent);
+  }
+
+  .block[data-type="hr"] { border-top: 1px solid var(--line); margin: 2rem 0; }
+  .block[data-type="hr"] textarea { display: none; }
+
+  /* --- menu --------------------------------------------------------- */
+
+  #menu {
+    position: absolute;
+    z-index: 10;
+    background: Canvas;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, .12);
+    padding: .35rem;
+    font-family: var(--sans);
+    font-size: .9rem;
+    min-width: 13rem;
+  }
+
+  #menu[hidden] { display: none; }
+
+  #menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    padding: .45rem .6rem;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  #menu button:hover { background: rgba(128, 128, 128, .13); }
+  #menu small { color: var(--faint); margin-left: .4rem; }
+
+  /* --- bar ---------------------------------------------------------- */
+
+  #bar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    padding: .8rem 1.5rem;
+    border-top: 1px solid var(--line);
+    background: Canvas;
+    font-family: var(--sans);
+    font-size: .9rem;
+  }
+
+  #bar button {
+    font: inherit;
+    padding: .45rem 1.1rem;
+    border-radius: 5px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+  }
+
+  #bar button.quiet { background: transparent; color: var(--accent); }
+  #status { color: var(--faint); }
+  #status a { color: var(--accent); }
+</style>
+
+<main>
+  <div id="title"></div>
+  <div id="byline"></div>
+  <div id="blocks"></div>
+</main>
+
+<div id="menu" hidden></div>
+
+<div id="bar">
+  <button id="publish">Publish</button>
+  <button id="new" class="quiet">New</button>
+  <span id="status"></span>
+</div>
+
+<script>
+// The block vocabulary. Only core tags for now - this renderer implements
+// no modules, so everything here maps straight onto something Telegraph
+// would also accept. When capability pages arrive, a site's declared
+// modules get appended to this list at runtime.
+const TYPES = [
+  {type: "p",          label: "Text",       hint: "plain paragraph"},
+  {type: "h3",         label: "Heading"},
+  {type: "h4",         label: "Subheading"},
+  {type: "blockquote", label: "Quote"},
+  {type: "pre",        label: "Code"},
+  {type: "li",         label: "List item"},
+  {type: "img",        label: "Image",      hint: "paste a URL"},
+  {type: "table",      label: "Table",      hint: "paste from a spreadsheet"},
+  {type: "hr",         label: "Divider"},
+];
+
+const PLACEHOLDER = {
+  p: "Write something…",
+  h3: "Heading",
+  h4: "Subheading",
+  blockquote: "Quote",
+  pre: "Code",
+  li: "List item",
+  img: "https://example.org/photo.jpg",
+  table: "Paste tab-separated rows, or type them with tabs",
+  hr: "",
+};
+
+const $ = (id) => document.getElementById(id);
+const state = {path: null, token: localStorage.getItem("bootpages.token")};
+
+// ---------------------------------------------------------------- fields
+
+function grow(area) {
+  area.style.height = "auto";
+  area.style.height = area.scrollHeight + "px";
+}
+
+function field(parent, placeholder) {
+  const area = document.createElement("textarea");
+  area.rows = 1;
+  area.placeholder = placeholder;
+  area.addEventListener("input", () => grow(area));
+  parent.appendChild(area);
+  return area;
+}
+
+const titleField = field($("title"), "Title");
+const bylineField = field($("byline"), "Your name");
+
+// ---------------------------------------------------------------- blocks
+
+function makeBlock(type = "p", text = "", at = null) {
+  const block = document.createElement("div");
+  block.className = "block";
+  block.dataset.type = type;
+
+  const plus = document.createElement("button");
+  plus.className = "plus";
+  plus.textContent = "+";
+  plus.tabIndex = -1;
+  plus.addEventListener("click", (event) => {
+    event.preventDefault();
+    openMenu(block);
+  });
+  block.appendChild(plus);
+
+  const area = field(block, PLACEHOLDER[type] || "");
+  area.value = text;
+
+  area.addEventListener("keydown", (event) => onKey(event, block, area));
+
+  if (at && at.nextSibling) {
+    $("blocks").insertBefore(block, at.nextSibling);
+  } else {
+    $("blocks").appendChild(block);
+  }
+
+  requestAnimationFrame(() => grow(area));
+  return block;
+}
+
+function onKey(event, block, area) {
+  // Enter opens a new block below, except in code and tables, where a
+  // newline is content rather than a new thought.
+  if (event.key === "Enter" && !event.shiftKey &&
+      block.dataset.type !== "pre" && block.dataset.type !== "table") {
+    event.preventDefault();
+    const next = makeBlock("p", "", block);
+    next.querySelector("textarea").focus();
+    return;
+  }
+
+  // Backspace on an empty block removes it and returns to the previous
+  // one, which is what every editor does and what nobody thinks about.
+  if (event.key === "Backspace" && area.value === "" &&
+      $("blocks").children.length > 1) {
+    event.preventDefault();
+    const previous = block.previousElementSibling;
+    block.remove();
+    if (previous) {
+      const area = previous.querySelector("textarea");
+      area.focus();
+      area.setSelectionRange(area.value.length, area.value.length);
+    }
+  }
+}
+
+function retype(block, type) {
+  block.dataset.type = type;
+  const area = block.querySelector("textarea");
+  area.placeholder = PLACEHOLDER[type] || "";
+  grow(area);
+  if (type !== "hr") area.focus();
+}
+
+// ------------------------------------------------------------------ menu
+
+function openMenu(block) {
+  const menu = $("menu");
+  menu.innerHTML = "";
+
+  for (const item of TYPES) {
+    const button = document.createElement("button");
+    button.innerHTML = item.hint
+      ? `${item.label}<small>${item.hint}</small>`
+      : item.label;
+    button.addEventListener("click", () => {
+      retype(block, item.type);
+      menu.hidden = true;
+    });
+    menu.appendChild(button);
+  }
+
+  const box = block.getBoundingClientRect();
+  menu.hidden = false;
+  menu.style.top = (window.scrollY + box.top) + "px";
+  menu.style.left = (window.scrollX + box.left - 16) + "px";
+}
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest("#menu") && !event.target.closest(".plus")) {
+    $("menu").hidden = true;
+  }
+});
+
+// ------------------------------------------------------------ conversion
+
+// Blocks to a node list. Consecutive list items become one ul, and a table
+// becomes nested lists - rows of cells - because the core tag set has no
+// table and nested bullets are what a site without one should show.
+function toNodes() {
+  const nodes = [];
+  let list = null;
+
+  for (const block of $("blocks").children) {
+    const type = block.dataset.type;
+    const text = block.querySelector("textarea").value;
+
+    if (type !== "li") list = null;
+    if (type !== "hr" && type !== "table" && !text.trim()) continue;
+
+    if (type === "li") {
+      if (!list) { list = {tag: "ul", children: []}; nodes.push(list); }
+      list.children.push({tag: "li", children: [text]});
+    } else if (type === "hr") {
+      nodes.push({tag: "hr", children: []});
+    } else if (type === "img") {
+      nodes.push({tag: "figure", children: [{tag: "img", attrs: {src: text.trim()}}]});
+    } else if (type === "table") {
+      const rows = text.split("\n").filter((line) => line.trim());
+      if (!rows.length) continue;
+      nodes.push({tag: "table", children: [{tag: "ul", children: rows.map((row) => ({
+        tag: "li",
+        children: [{tag: "ul", children: splitRow(row).map((cell) => ({
+          tag: "li", children: [cell],
+        }))}],
+      }))}]});
+    } else {
+      nodes.push({tag: type, children: [text]});
+    }
+  }
+
+  return nodes;
+}
+
+// Tabs first, because that is what a spreadsheet puts on the clipboard.
+// Pipes second, for anyone who already writes Markdown tables.
+function splitRow(row) {
+  if (row.includes("\t")) return row.split("\t").map((c) => c.trim());
+  if (row.includes("|")) {
+    const cells = row.split("|").map((c) => c.trim());
+    if (cells[0] === "") cells.shift();
+    if (cells[cells.length - 1] === "") cells.pop();
+    return cells;
+  }
+  return [row.trim()];
+}
+
+// The reverse, for editing a page that already exists.
+function fromNodes(nodes) {
+  $("blocks").innerHTML = "";
+
+  for (const node of nodes) {
+    if (typeof node === "string") { makeBlock("p", node); continue; }
+
+    const kids = node.children || [];
+
+    if (node.tag === "ul") {
+      for (const item of kids) makeBlock("li", textOf(item));
+    } else if (node.tag === "figure") {
+      const img = kids.find((k) => k && k.tag === "img");
+      makeBlock("img", img && img.attrs ? img.attrs.src : "");
+    } else if (node.tag === "hr") {
+      makeBlock("hr");
+    } else if (node.tag === "table") {
+      makeBlock("table", tableText(node));
+    } else {
+      makeBlock(node.tag, textOf(node));
+    }
+  }
+
+  if (!$("blocks").children.length) makeBlock("p");
+}
+
+function textOf(node) {
+  if (typeof node === "string") return node;
+  return (node.children || []).map(textOf).join("");
+}
+
+function tableText(node) {
+  const outer = (node.children || [])[0];
+  const rows = outer && outer.children ? outer.children : [];
+  return rows.map((row) => {
+    const inner = (row.children || [])[0];
+    const cells = inner && inner.children ? inner.children : [];
+    return cells.map(textOf).join("\t");
+  }).join("\n");
+}
+
+// ------------------------------------------------------------------- api
+
+async function call(method, params) {
+  const response = await fetch("/" + method, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(params),
+  });
+  const payload = await response.json();
+  if (!payload.ok) throw new Error(payload.error);
+  return payload.result;
+}
+
+// A local instance with no account yet mints one on first use. The token
+// is the whole identity, so it goes in localStorage and nowhere else.
+async function token() {
+  if (state.token) return state.token;
+
+  const account = await call("createAccount", {
+    short_name: "local",
+    author_name: bylineField.value || "",
+  });
+
+  state.token = account.access_token;
+  localStorage.setItem("bootpages.token", state.token);
+  return state.token;
+}
+
+async function publish() {
+  const status = $("status");
+  status.textContent = "publishing…";
+
+  try {
+    const access_token = await token();
+    const params = {
+      access_token,
+      title: titleField.value || "Untitled",
+      author_name: bylineField.value || "",
+      content: JSON.stringify(toNodes()),
+    };
+
+    const page = state.path
+      ? await call("editPage", {...params, path: state.path})
+      : await call("createPage", params);
+
+    state.path = page.path;
+    history.replaceState(null, "", "/?edit=" + page.path);
+
+    status.innerHTML =
+      `<a href="/${page.path}" target="_blank">/${page.path}</a>` +
+      ` · revision ${page.revision} · ${page.digest.slice(0, 18)}…`;
+
+  } catch (problem) {
+    status.textContent = "failed: " + problem.message;
+  }
+}
+
+async function load(path) {
+  const page = await call("getPage", {path, return_content: "true"});
+  state.path = page.path;
+  titleField.value = page.title;
+  bylineField.value = page.author_name || "";
+  grow(titleField);
+  grow(bylineField);
+  fromNodes(page.content || []);
+  $("status").innerHTML =
+    `<a href="/${page.path}" target="_blank">/${page.path}</a>` +
+    ` · revision ${page.revision}`;
+}
+
+$("publish").addEventListener("click", publish);
+$("new").addEventListener("click", () => { location.href = "/"; });
+
+// ------------------------------------------------------------------ boot
+
+const editing = new URLSearchParams(location.search).get("edit");
+
+if (editing) {
+  load(editing).catch((problem) => {
+    $("status").textContent = "could not load: " + problem.message;
+    makeBlock("p");
+  });
+} else {
+  makeBlock("p").querySelector("textarea");
+  titleField.focus();
+}
+</script>

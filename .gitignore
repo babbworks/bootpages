@@ -1,0 +1,21 @@
+# Local instance data. The store lives here in development.
+*.db
+*.db-journal
+*.db-wal
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Secrets, if any ever exist
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.DS_Store
+*.swp

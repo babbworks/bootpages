@@ -1,0 +1,80 @@
+/*
+  A published page.
+
+  Deliberately plain. A bootpage carries no appearance of its own, so this
+  is the reference renderer's house style and nothing more - the same page
+  served by another consumer should look like that consumer, not like this.
+*/
+
+:root {
+  --ink: #1a1a1a;
+  --faint: #767676;
+  --line: #e6e6e6;
+  --accent: #2b6cb0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root { --ink: #e8e8e8; --faint: #9a9a9a; --line: #2c2c2c; }
+  body { background: #141414; }
+}
+
+body {
+  margin: 0;
+  font: 1.05rem/1.65 Georgia, "Iowan Old Style", "Times New Roman", serif;
+  color: var(--ink);
+}
+
+article {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 4rem 1.5rem 8rem 1.5rem;
+}
+
+h1 { font-size: 2.4rem; line-height: 1.2; margin: 0 0 .75rem 0; }
+h3 { font-size: 1.5rem; margin: 2rem 0 .6rem 0; }
+h4 { font-size: 1.15rem; margin: 1.6rem 0 .5rem 0; }
+
+address {
+  display: block;
+  font: .95rem/1.5 system-ui, -apple-system, "Segoe UI", Helvetica, sans-serif;
+  font-style: normal;
+  color: var(--faint);
+  margin-bottom: 2.5rem;
+}
+
+address a { color: inherit; }
+
+p, ul, ol, blockquote, figure, pre { margin: 0 0 1.1rem 0; }
+
+a { color: var(--accent); }
+
+blockquote {
+  border-left: 3px solid var(--line);
+  padding-left: 1rem;
+  margin-left: 0;
+  font-style: italic;
+}
+
+pre {
+  font: .9rem/1.5 ui-monospace, Menlo, Consolas, monospace;
+  background: rgba(128, 128, 128, .08);
+  padding: .9rem 1rem;
+  border-radius: 4px;
+  /* Wide content scrolls inside its own box rather than making the page
+     scroll sideways. */
+  overflow-x: auto;
+}
+
+figure { margin-inline: 0; }
+img, video, iframe { max-width: 100%; height: auto; display: block; }
+
+hr { border: 0; border-top: 1px solid var(--line); margin: 2.5rem 0; }
+
+/*
+  A table arrives as nested lists, because the core tag set has none. A
+  consumer that implements the `table` module lays these out as a grid;
+  this one does not, so they render as nested bullets - which is exactly
+  what a site without the module should show, and is why the nested form
+  was chosen over a flatter one.
+*/
+ul ul { margin: 0; }
