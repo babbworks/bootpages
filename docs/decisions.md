@@ -48,31 +48,7 @@ follow references at all.
 
 ---
 
-## 3. Gating mechanism
-
-**Question.** The first instance is gated. How, exactly — and can the API
-stay Telegraph-compatible while it is?
-
-**Why it matters.** `createAccount` is the entry point, and a Telegraph
-client calls it with no extra parameters. Gating it necessarily breaks
-something.
-
-**Options.**
-
-- **Network gating.** Bind to a private address or allowlist. The API stays
-  byte-compatible; access is controlled outside it.
-- **Invite parameter.** `createAccount` requires an additional argument.
-  Only account creation breaks; every other method stays compatible.
-- **Out-of-band minting.** `createAccount` is disabled entirely and tokens
-  are issued by an admin tool. The public API stays clean.
-
-**Recommendation.** Network gating first, since it costs nothing and breaks
-nothing, with out-of-band minting as the administrative path. Keep the
-invite-parameter option in reserve for a semi-open phase.
-
----
-
-## 4. Core module registry
+## 3. Core module registry
 
 **Question.** Which modules ship as core?
 
@@ -109,6 +85,19 @@ that does not exist yet simply renders as its children.
 - Tables are nested lists, chosen for fallback fidelity over compactness.
   No new vocabulary; the memo lens accepts pasted tab-separated text and
   pipe tables.
+- Three account modes - open, invited, admin - enforced in the store and
+  not in the UI. `admin` is the default; a fresh instance mints nothing for
+  a stranger.
+- An invite is a one-time right to create an account, not a credential to
+  one. That is why it is safer to hand out than a token.
+- No administration over HTTP. Shell access is the operator's credential,
+  because an admin token in the browser's account shelf would change what
+  stealing that shelf costs.
+- The editor and published pages are served on separate origins, one
+  process. Same-origin policy is what protects the token shelf, and it is
+  keyed on origin rather than on process.
+- One token per request, ever. This is what keeps the store unable to
+  correlate a person's accounts.
 - Capability pages: a site publishes what it welcomes, as a bootpage.
   Optional, advertising rather than contract, and the mechanism by which a
   de-facto registry converges.

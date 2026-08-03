@@ -54,6 +54,22 @@ CREATE TABLE IF NOT EXISTS pages (
 );
 
 CREATE INDEX IF NOT EXISTS pages_by_account ON pages (token, created DESC);
+
+-- Invite codes, for instances running in `invited` mode.
+--
+-- An invite is NOT a credential to an account: it is a one-time right to
+-- create one. That difference is the whole reason the mode exists. A token
+-- intercepted in transit lets someone publish as you, forever, with no way
+-- to expire it. An intercepted invite lets a stranger create their own
+-- account, once, and only until it is used or expires.
+CREATE TABLE IF NOT EXISTS invites (
+    code     TEXT PRIMARY KEY,
+    note     TEXT NOT NULL DEFAULT '',
+    created  REAL NOT NULL,
+    expires  REAL,
+    used_at  REAL,
+    used_by  TEXT
+);
 """
 
 
@@ -82,17 +98,27 @@ def connect(path="data/bootpages.db"):
 # --------------------------------------------------------------- accounts
 
 
-def create_account(db, short_name, author_name="", author_url=""):
+def create_account(db, short_name, author_name="", author_url="",
+                   mode="open", invite=None):
     """
     An account is a token and nothing else.
 
     No email, no password, no recovery. The token IS the identity, which is
     why losing it means losing the account and why this is the one call
     that must never be retried blindly.
+
+    `mode` is enforced here rather than in the UI, so a client that skips
+    the first-run screen gets exactly the same answer as one that does not.
     """
 
     if not short_name:
         raise StoreError("SHORT_NAME_REQUIRED")
+
+    if mode == "admin":
+        raise StoreError("ACCOUNT_CREATION_CLOSED")
+
+    if mode == "invited":
+        claim_invite(db, invite)
 
     token = secrets.token_hex(30)
 
@@ -102,6 +128,11 @@ def create_account(db, short_name, author_name="", author_url=""):
         (token, short_name[:32], author_name[:128], author_url[:512], time.time()),
     )
     db.commit()
+
+    if mode == "invited":
+        db.execute("UPDATE invites SET used_by = ? WHERE code = ?",
+                   (token, invite))
+        db.commit()
 
     return account(db, token)
 
@@ -148,6 +179,83 @@ def revoke(db, token):
     db.commit()
 
     return account(db, new)
+
+
+# ---------------------------------------------------------------- invites
+
+
+def create_invite(db, note="", expires=None):
+    """
+    A one-time right to create an account.
+
+    Shorter than a token on purpose. It is not a credential to anything
+    that exists yet, so it can be read aloud, pasted into a chat, or
+    written on paper without handing over an identity - and it stops
+    working the moment it is used.
+    """
+
+    code = secrets.token_urlsafe(9)
+
+    db.execute(
+        "INSERT INTO invites (code, note, created, expires) VALUES (?, ?, ?, ?)",
+        (code, note[:200], time.time(), expires),
+    )
+    db.commit()
+
+    return code
+
+
+def claim_invite(db, code):
+    """
+    Spend an invite, or refuse.
+
+    Marked used before the account is created rather than after. If
+    something fails in between, an invite is lost - which is a cheap thing
+    to lose and trivially reissued. The other order risks a code being
+    spendable twice under concurrency, which is the failure that matters.
+    """
+
+    if not code:
+        raise StoreError("INVITE_REQUIRED")
+
+    row = db.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone()
+
+    if row is None:
+        raise StoreError("INVITE_INVALID")
+
+    if row["used_at"] is not None:
+        raise StoreError("INVITE_ALREADY_USED")
+
+    if row["expires"] is not None and row["expires"] < time.time():
+        raise StoreError("INVITE_EXPIRED")
+
+    marked = db.execute(
+        "UPDATE invites SET used_at = ? WHERE code = ? AND used_at IS NULL",
+        (time.time(), code),
+    )
+    db.commit()
+
+    # Zero rows means another request claimed it between the read above and
+    # this write. Both callers asked honestly; only one may have it.
+    if marked.rowcount != 1:
+        raise StoreError("INVITE_ALREADY_USED")
+
+    return row
+
+
+def invites(db, unused_only=False):
+    query = "SELECT * FROM invites"
+
+    if unused_only:
+        query += " WHERE used_at IS NULL"
+
+    return db.execute(query + " ORDER BY created DESC").fetchall()
+
+
+def any_accounts(db):
+    """Whether this store has ever had an account. See server.first_run()."""
+
+    return db.execute("SELECT 1 FROM accounts LIMIT 1").fetchone() is not None
 
 
 # ------------------------------------------------------------------ paths

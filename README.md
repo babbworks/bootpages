@@ -160,10 +160,11 @@ python3 -m pytest
 As a service: `sudo ./install.sh`. No venv, no `.env`, no secret to place —
 see [running it](docs/running.md).
 
-**It binds to `127.0.0.1` and `createAccount` is open**, so the loopback
-bind is the entire gate. The server refuses a non-loopback address unless
-`--allow-public` is passed, which makes exposing account creation a
-deliberate act rather than a typo in a unit file.
+**It binds to `127.0.0.1` and defaults to `admin` mode** — `createAccount`
+is refused, and tokens are minted from a shell. `invited` and `open` are
+the other two modes. The editor and published pages are served on separate
+origins so that a script inside a page cannot reach the tokens the editor
+stores.
 
 No dependencies — standard library only, `http.server` and `sqlite3`. A
 store whose promise is durability should be runnable in ten years by
@@ -174,9 +175,10 @@ anyone with a Python interpreter and no working package index.
 | format, canonical form, digest | done |
 | store, all eight API methods | done |
 | public rendering, view counting | done |
-| the editor | first version |
+| the editor, account shelf, first-run | done |
+| account modes, invites, admin CLI | done |
+| origin split and security headers | done |
 | capability pages | designed, not built |
-| gating beyond the loopback bind | not built |
 
 The reference renderer implements **no modules**, deliberately. That makes
 it a [Level 0 consumer](docs/conformance.md), and it means every non-core

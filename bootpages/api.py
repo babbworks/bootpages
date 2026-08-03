@@ -61,10 +61,14 @@ def account_json(db, row):
     }
 
 
-def page_json(row, base, content=False):
+def page_json(row, instance, content=False):
     payload = {
         "path": row["path"],
-        "url": f"{base}/{row['path']}",
+        # The pages origin, never the origin this request arrived on. The
+        # editor hands out links to where pages live rather than back to
+        # itself, and that split is what stops a script inside a page
+        # reading the tokens the editor stores.
+        "url": f"{instance.pages_url}/{row['path']}",
         "title": row["title"],
         "author_name": row["author_name"],
         "author_url": row["author_url"],
@@ -85,14 +89,14 @@ def page_json(row, base, content=False):
 # --------------------------------------------------------------- dispatch
 
 
-def call(db, method, params, base="http://localhost:8080"):
+def call(db, method, params, instance):
     handler = METHODS.get(method)
 
     if handler is None:
         raise ApiError("METHOD_NOT_FOUND")
 
     try:
-        return handler(db, params, base)
+        return handler(db, params, instance)
 
     except store.StoreError as problem:
         raise ApiError(str(problem))
@@ -103,18 +107,23 @@ def call(db, method, params, base="http://localhost:8080"):
         raise ApiError(f"CONTENT_FORMAT_INVALID: {problem}")
 
 
-def _create_account(db, params, base):
+def _create_account(db, params, instance):
+    # The mode is enforced here, in the store, rather than by the client
+    # choosing not to offer a button. A request that skips the first-run
+    # screen gets exactly the same answer as one that does not.
     row = store.create_account(
         db,
         params.get("short_name", ""),
         params.get("author_name", ""),
         params.get("author_url", ""),
+        mode=instance.mode,
+        invite=params.get("invite"),
     )
 
     return account_json(db, row)
 
 
-def _get_account_info(db, params, base):
+def _get_account_info(db, params, instance):
     row = store.account(db, params.get("access_token", ""))
     payload = account_json(db, row)
 
@@ -135,7 +144,7 @@ def _get_account_info(db, params, base):
     return payload
 
 
-def _edit_account_info(db, params, base):
+def _edit_account_info(db, params, instance):
     row = store.edit_account(
         db,
         params.get("access_token", ""),
@@ -147,11 +156,11 @@ def _edit_account_info(db, params, base):
     return account_json(db, row)
 
 
-def _revoke_access_token(db, params, base):
+def _revoke_access_token(db, params, instance):
     return account_json(db, store.revoke(db, params.get("access_token", "")))
 
 
-def _create_page(db, params, base):
+def _create_page(db, params, instance):
     row = store.create_page(
         db,
         params.get("access_token", ""),
@@ -161,10 +170,10 @@ def _create_page(db, params, base):
         params.get("author_url", ""),
     )
 
-    return page_json(row, base, content=params.get("return_content") == "true")
+    return page_json(row, instance, content=params.get("return_content") == "true")
 
 
-def _edit_page(db, params, base):
+def _edit_page(db, params, instance):
     row = store.edit_page(
         db,
         params.get("access_token", ""),
@@ -175,16 +184,16 @@ def _edit_page(db, params, base):
         params.get("author_url", ""),
     )
 
-    return page_json(row, base, content=params.get("return_content") == "true")
+    return page_json(row, instance, content=params.get("return_content") == "true")
 
 
-def _get_page(db, params, base):
+def _get_page(db, params, instance):
     row = store.page(db, params.get("path", ""))
 
-    return page_json(row, base, content=params.get("return_content") == "true")
+    return page_json(row, instance, content=params.get("return_content") == "true")
 
 
-def _get_page_list(db, params, base):
+def _get_page_list(db, params, instance):
     total, rows = store.page_list(
         db,
         params.get("access_token", ""),
@@ -194,11 +203,28 @@ def _get_page_list(db, params, base):
 
     return {
         "total_count": total,
-        "pages": [page_json(row, base) for row in rows],
+        "pages": [page_json(row, instance) for row in rows],
     }
 
 
+def _get_instance_info(db, params, instance):
+    """
+    What this instance is, so a client knows what to offer.
+
+    Not a Telegraph method - Telegraph has exactly one mode and never
+    needed to say so. An instance here can be open, invited or
+    admin-minted, and the first-run screen is a function of the answer
+    rather than a static design.
+
+    Everything returned is public by construction: a name, a sentence, the
+    mode, and how to reach a human if the mode means asking one.
+    """
+
+    return instance.describe()
+
+
 METHODS = {
+    "getInstanceInfo": _get_instance_info,
     "createAccount": _create_account,
     "getAccountInfo": _get_account_info,
     "editAccountInfo": _edit_account_info,

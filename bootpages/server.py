@@ -1,22 +1,30 @@
 """
-The localhost server.
+The server.
 
 Standard library only - http.server and sqlite3, no dependencies at all.
 That is a deliberate property rather than an accident of an early version:
 a store whose promise is durability should be runnable in ten years by
 anyone with a Python interpreter and no working package index.
 
-Routes, in the order they are tried:
+TWO ORIGINS, ONE PROCESS
+------------------------
+The editor and published pages are served on different origins, because
+the editor keeps author tokens in browser storage and published pages are
+untrusted content. Same-origin policy is what stops a script inside a page
+reading that storage - and it is enforced by the browser, keyed on origin
+(scheme, host, port). Two processes would buy nothing extra against this,
+so one process runs both listeners.
 
-    POST /<method>          the API, Telegraph-shaped
-    GET  /getPage/<path>    the one API method Telegraph also serves on GET
-    GET  /                  the editor
-    GET  /static/<file>     editor assets
-    GET  /<path>            a published page, rendered
+    editor origin   the editor, its assets, and the API
+    pages  origin   rendered pages and their stylesheet - nothing else
+
+Neither serves the other's routes. A script that somehow ran on a page
+cannot reach the API from its own origin, and the editor never renders
+stored content.
 
 Run it:
 
-    python -m bootpages.server
+    python3 -m bootpages.server
 """
 
 import argparse
@@ -28,6 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import api, render, store
+from .config import ConfigError, Instance
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
@@ -36,11 +45,59 @@ TYPES = {".html": "text/html; charset=utf-8",
          ".css": "text/css; charset=utf-8",
          ".js": "text/javascript; charset=utf-8"}
 
+# Applied everywhere. nosniff stops a browser guessing a content type it
+# was told, and no-referrer keeps a page's address out of the logs of
+# whoever hosts an image it points at.
+COMMON_HEADERS = (
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+)
+
+# A published page executes nothing. This is the header that says so, and
+# it holds regardless of any bug in the renderer - a defence at a different
+# layer from "there is no path by which author text becomes markup".
+#
+# frame-ancestors is deliberately open: bootpages are *meant* to be
+# embedded by consuming sites, so refusing to be framed would break the
+# thing they are for.
+PAGE_CSP = (
+    "default-src 'none'; "
+    "style-src 'self'; "
+    "img-src 'self' https: data:; "
+    "media-src 'self' https:; "
+    "frame-src https:; "
+    "frame-ancestors *; "
+    "base-uri 'none'; "
+    "form-action 'none'"
+)
+
+# The editor is the opposite case. It must never be framed, because a
+# clickjacked token field is a real attack against a credential that cannot
+# be revoked by anyone but its holder.
+EDITOR_HEADERS = (
+    ("X-Frame-Options", "DENY"),
+    ("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'none'"),
+)
+
 
 class Handler(BaseHTTPRequestHandler):
+    """
+    One handler, two roles. `self.server.role` is "editor" or "pages", and
+    every route check consults it - so a route existing on one origin is
+    not a route that exists on the other.
+    """
+
     server_version = "bootpages"
 
     # ------------------------------------------------------------ helpers
+
+    @property
+    def role(self):
+        return self.server.role
+
+    @property
+    def instance(self):
+        return self.server.instance
 
     def reply(self, status, body, kind="text/html; charset=utf-8"):
         payload = body.encode("utf-8") if isinstance(body, str) else body
@@ -48,16 +105,33 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(payload)))
+        # Every reply carries the same headers; only the body is withheld
+        # on HEAD. A consumer checking whether a page still exists should
+        # get the same answer either way.
+
+        for name, value in COMMON_HEADERS:
+            self.send_header(name, value)
+
+        if self.role == "pages":
+            self.send_header("Content-Security-Policy", PAGE_CSP)
+        else:
+            for name, value in EDITOR_HEADERS:
+                self.send_header(name, value)
+
         self.end_headers()
-        self.wfile.write(payload)
+
+        if self.command != "HEAD":
+            self.wfile.write(payload)
 
     def reply_json(self, payload, status=200):
         self.reply(status, json.dumps(payload, ensure_ascii=False),
                    "application/json; charset=utf-8")
 
-    def log_message(self, fmt, *args):
-        # The default logs to stderr with a timestamp format nobody wants.
-        print(f"{self.command} {self.path} {args[1] if len(args) > 1 else ''}")
+    def not_found(self):
+        self.reply(404, "<h1>404</h1><p>No page at that address.</p>")
+
+    def log_message(self, format, *args):
+        print(f"[{self.role}] {self.command} {self.path}")
 
     def params(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -79,23 +153,32 @@ class Handler(BaseHTTPRequestHandler):
 
         return {k: v[0] for k, v in parse_qs(raw, keep_blank_values=True).items()}
 
-    def base(self):
-        host = self.headers.get("Host") or f"localhost:{self.server.server_port}"
-
-        return f"http://{host}"
-
     # -------------------------------------------------------------- verbs
 
     def do_POST(self):
-        method = urlparse(self.path).path.strip("/")
+        # The API lives on the editor origin only. A script running on a
+        # published page has no same-origin route to it.
+        if self.role != "editor":
+            return self.not_found()
 
-        self.serve_api(method, self.params())
+        self.serve_api(urlparse(self.path).path.strip("/"), self.params())
+
+    def do_HEAD(self):
+        # Same routing, same headers, no body. reply() withholds the body
+        # by checking self.command.
+        self.do_GET()
 
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path.strip("/")
         query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
+        if self.role == "pages":
+            return self.get_pages(path)
+
+        return self.get_editor(path, query)
+
+    def get_editor(self, path, query):
         # Telegraph serves getPage over GET as /getPage/<path>.
         if path.startswith("getPage/"):
             query["path"] = path[len("getPage/"):]
@@ -111,13 +194,26 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("static/"):
             return self.serve_static(path[len("static/"):])
 
+        # Deliberately not a page. Stored content is never rendered on the
+        # origin that holds tokens.
+        return self.not_found()
+
+    def get_pages(self, path):
+        # The stylesheet is the one asset this origin serves, because a
+        # page needs it and inlining would mean loosening style-src.
+        if path == "static/page.css":
+            return self.serve_static("page.css")
+
+        if not path or path in api.METHODS or path.startswith("getPage/"):
+            return self.not_found()
+
         return self.serve_page(path)
 
     # ------------------------------------------------------------ serving
 
     def serve_api(self, method, params):
         try:
-            result = api.call(self.server.db, method, params, self.base())
+            result = api.call(self.server.db, method, params, self.instance)
 
         except api.ApiError as problem:
             return self.reply_json({"ok": False, "error": str(problem)})
@@ -128,12 +224,12 @@ class Handler(BaseHTTPRequestHandler):
         # Anything with a separator in it is an attempt to leave the
         # directory, not a filename.
         if "/" in name or "\\" in name or name.startswith("."):
-            return self.reply(404, "Not found")
+            return self.not_found()
 
         full = os.path.join(STATIC, name)
 
         if not os.path.isfile(full):
-            return self.reply(404, "Not found")
+            return self.not_found()
 
         with open(full, "rb") as handle:
             body = handle.read()
@@ -147,20 +243,18 @@ class Handler(BaseHTTPRequestHandler):
             row = store.page(self.server.db, path)
 
         except store.StoreError:
-            return self.reply(404, "<h1>404</h1><p>No page at that address.</p>")
+            return self.not_found()
 
         if row["hidden"]:
-            return self.reply(404, "<h1>404</h1><p>No page at that address.</p>")
+            return self.not_found()
 
         store.count_view(self.server.db, path)
-
-        content = json.loads(row["content"])
 
         # No modules. The reference renderer is a Level 0 consumer, so
         # every non-core tag falls back to its children - which is what a
         # page looks like on a site that has never heard of it, and the
         # honest default for a registry discovered from use.
-        body = render.render(content)
+        body = render.render(json.loads(row["content"]))
 
         self.reply(200, render.document(
             row["title"], body,
@@ -169,24 +263,7 @@ class Handler(BaseHTTPRequestHandler):
         ))
 
 
-LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost", ""})
-
-PUBLIC_WARNING = """\
-Refusing to bind to {host}.
-
-createAccount is open on this build: anyone who can reach this port can
-mint an account and publish permanent public pages. Binding to a loopback
-address is currently the only thing gating it, which is what
-docs/decisions.md calls network gating.
-
-If you meant it - you are behind a reverse proxy that authenticates, or on
-a network you control - say so explicitly:
-
-    python3 -m bootpages.server --host {host} --allow-public
-
-Nothing about this is a security control. It is a speed bump placed where
-an accident would otherwise be silent.
-"""
+# ------------------------------------------------------------------ notify
 
 
 def notify(state):
@@ -218,9 +295,8 @@ def notify(state):
 def watchdog():
     """
     A server that has stopped answering still looks alive to Restart=always,
-    because the process is still there. This pings only while the listening
-    socket is healthy, so a wedged server stops the pings and systemd
-    restarts it.
+    because the process is still there. Silence is what tells the
+    difference.
     """
 
     window = int(os.environ.get("WATCHDOG_USEC", 0)) / 1_000_000
@@ -233,29 +309,69 @@ def watchdog():
             time.sleep(window / 2)          # half the interval, as documented
             notify("WATCHDOG=1")
 
-    thread = threading.Thread(target=loop, daemon=True)
-    thread.start()
+    threading.Thread(target=loop, daemon=True).start()
 
 
-def serve(host="127.0.0.1", port=8080, database="data/bootpages.db",
-          allow_public=False):
-    if host not in LOOPBACK and not allow_public:
-        raise SystemExit(PUBLIC_WARNING.format(host=host))
+# ---------------------------------------------------------------- first run
 
+
+def first_run(db, instance):
+    """
+    Mint one account against an empty store, and print its token.
+
+    The default mode is `admin`, which would otherwise mean a fresh
+    instance where nobody can write anything until someone runs the CLI.
+    This removes that friction without opening a hole: anyone able to start
+    the server already has shell access and could mint a token anyway.
+
+    Once any account exists this never happens again.
+    """
+
+    if instance.mode == "open" or store.any_accounts(db):
+        return
+
+    from .admin import show_token
+
+    row = store.create_account(db, "first", "", "", mode="open")
+
+    show_token(row, heading="First account on this instance")
+
+
+# -------------------------------------------------------------------- run
+
+
+def listener(instance, db, role, host, port):
     httpd = ThreadingHTTPServer((host, port), Handler)
-    httpd.db = store.connect(database)
+    httpd.db = db
+    httpd.role = role
+    httpd.instance = instance
 
-    print(f"bootpages on http://{host}:{port}  (store: {database})")
-    print("editor at /   ·  api at POST /<method>  ·  ctrl-c to stop")
+    return httpd
 
-    if host not in LOOPBACK:
-        print("!! reachable beyond this machine, with createAccount open")
+
+def serve(instance):
+    db = store.connect(instance.database)
+
+    editor = listener(instance, db, "editor", instance.host, instance.port)
+    pages = listener(instance, db, "pages", instance.pages_host,
+                     instance.pages_port)
+
+    print(f"{instance.name}  ·  mode: {instance.mode}")
+    print(f"  editor  {instance.editor_url}")
+    print(f"  pages   {instance.pages_url}")
+
+    if not instance.is_loopback:
+        print("  !! reachable beyond this machine")
+
+    first_run(db, instance)
+
+    threading.Thread(target=pages.serve_forever, daemon=True).start()
 
     notify("READY=1")
     watchdog()
 
     try:
-        httpd.serve_forever()
+        editor.serve_forever()
 
     except KeyboardInterrupt:
         print("\nstopped")
@@ -266,18 +382,39 @@ def serve(host="127.0.0.1", port=8080, database="data/bootpages.db",
 
 def main():
     parser = argparse.ArgumentParser(description="Run bootpages.")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--db", default="data/bootpages.db")
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--pages-host")
+    parser.add_argument("--pages-port", type=int)
+    parser.add_argument("--db")
+    parser.add_argument("--name")
+    parser.add_argument("--description")
+    parser.add_argument("--contact")
+    parser.add_argument(
+        "--mode", choices=("open", "invited", "admin"),
+        help="how accounts come into being. admin (the default) refuses "
+             "createAccount entirely; tokens are minted with "
+             "python3 -m bootpages.admin.",
+    )
     parser.add_argument(
         "--allow-public", action="store_true",
-        help="permit binding to a non-loopback address. createAccount is "
-             "open, so this exposes account creation to that network.",
+        help="permit binding to a non-loopback address.",
     )
 
     args = parser.parse_args()
 
-    serve(args.host, args.port, args.db, args.allow_public)
+    try:
+        instance = Instance(
+            name=args.name, description=args.description, mode=args.mode,
+            contact=args.contact, host=args.host, port=args.port,
+            pages_host=args.pages_host, pages_port=args.pages_port,
+            database=args.db, allow_public=args.allow_public,
+        )
+
+    except ConfigError as problem:
+        raise SystemExit(f"\n{problem}\n")
+
+    serve(instance)
 
 
 if __name__ == "__main__":
