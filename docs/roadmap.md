@@ -2,7 +2,14 @@
 
 The build, in order, with the reasoning for the order.
 
-Effort figures assume the [open decisions](decisions.md) do not churn.
+Phases carry a status. Effort figures assume the
+[open decisions](decisions.md) do not churn.
+
+**Built so far:** the format core with its canonical form and digest, the
+store, all eight API methods, public rendering with view counting, and a
+first editor. Outstanding in the early phases: the memo and YAML lenses,
+the strip/blind/opacity tests as an automated suite, and a real Telegraph
+client run against the store as the conformance check.
 Revision identity is settled — see [revision markers](format.md#revision-markers).
 
 ---
@@ -21,7 +28,7 @@ pages exist that other people depend on.
 
 ---
 
-## Phase 0 — Ground · 1 day
+## Phase 0 — Ground · 1 day · **partly done**
 
 The repository, this documentation, and a conformance harness before there
 is anything to conform.
@@ -36,7 +43,7 @@ later phase, and it did not have to be written.
 
 ---
 
-## Phase 1 — Format · 2–4 days
+## Phase 1 — Format · 2–4 days · **core done**
 
 The node model made real: parse, validate, canonicalise, render.
 
@@ -58,7 +65,7 @@ tests, not example-based ones.
 
 ---
 
-## Phase 2 — Store and API · 3–5 days
+## Phase 2 — Store and API · 3–5 days · **done**
 
 The eight methods, with persistence.
 
@@ -86,7 +93,7 @@ needed will be urgent.
 
 ---
 
-## Phase 3 — Serving · 2–3 days
+## Phase 3 — Serving · 2–3 days · **done**
 
 Public rendering of a page at its path.
 

@@ -148,15 +148,38 @@ fallback rendering all at once. They cannot drift apart.
 
 ## Status
 
-Design. Nothing is built yet. The format is settled enough to specify and
-unsettled enough to argue with — see [open decisions](docs/decisions.md),
-none of which now block starting.
+**Early, and it runs.** A localhost instance publishes pages, renders them,
+and speaks the whole API.
 
-Revision identity was the one that did, and it is settled: a `revision`
-counter for ordering, a labelled `digest` for content identity, and a
-canonical form so that two parties anywhere can confirm they are looking at
-the same page.
+```sh
+python3 -m bootpages.server        # http://127.0.0.1:8080
+python3 -m pytest
+```
 
-The first instance will be gated to invited accounts. The API supports
-anonymous account creation; whether the world can reach it is a separate
-question, and the answer starts as no.
+No dependencies — standard library only, `http.server` and `sqlite3`. A
+store whose promise is durability should be runnable in ten years by
+anyone with a Python interpreter and no working package index.
+
+| | |
+|---|---|
+| format, canonical form, digest | done |
+| store, all eight API methods | done |
+| public rendering, view counting | done |
+| the editor | first version |
+| capability pages | designed, not built |
+| gating beyond binding to localhost | not built |
+
+The reference renderer implements **no modules**, deliberately. That makes
+it a [Level 0 consumer](docs/conformance.md), and it means every non-core
+tag exercises the fallback path on every request — which is what a page
+should look like on a site that has never heard of it.
+
+See [open decisions](docs/decisions.md) for what is still unsettled; none
+of it blocks building. Revision identity was the one that did, and it is
+settled: a `revision` counter for ordering, a labelled `digest` for content
+identity, and a canonical form so two parties anywhere can confirm they are
+looking at the same page.
+
+The first instance is gated by binding to localhost and nothing else. The
+API supports anonymous account creation; whether the world can reach it is
+a separate question, and the answer starts as no.
