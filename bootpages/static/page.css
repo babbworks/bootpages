@@ -7,21 +7,34 @@
 */
 
 :root {
-  --ink: #1a1a1a;
-  --faint: #767676;
-  --line: #e6e6e6;
+  /* Keeps the browser's own colours - scrollbars, form controls, anything
+     using a system colour - on the same scheme as the properties below.
+     Without it the two halves can disagree, which is how the editor ended
+     up with light text on a white menu. */
+  color-scheme: light dark;
+
+  --ink: #111;
+  --bg: #fff;
+  --faint: #6e6e6e;
+  --line: #e4e4e4;
   --accent: #2b6cb0;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root { --ink: #e8e8e8; --faint: #9a9a9a; --line: #2c2c2c; }
-  body { background: #141414; }
+  :root {
+    --ink: #ececec;
+    --bg: #141414;
+    --faint: #9a9a9a;
+    --line: #2e2e2e;
+    --accent: #7fb3e8;
+  }
 }
 
 body {
   margin: 0;
   font: 1.05rem/1.65 Georgia, "Iowan Old Style", "Times New Roman", serif;
   color: var(--ink);
+  background: var(--bg);
 }
 
 article {

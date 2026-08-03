@@ -18,18 +18,33 @@
 
 <style>
   :root {
-    --ink: #1a1a1a;
-    --faint: #b4b4b4;
-    --line: #ebebeb;
+    /* Declared so the system colours the browser picks - form controls,
+       scrollbars, and anything using Canvas - follow the same scheme the
+       custom properties below do. Without this, a dark-mode browser gave
+       the menu light grey text on a white Canvas: the media query moved
+       half the pair and left the other half behind. */
+    color-scheme: light dark;
+
+    --ink: #111;
+    --bg: #fff;
+    --faint: #8a8a8a;
+    --line: #e4e4e4;
     --accent: #2b6cb0;
     --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
     --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   }
 
   @media (prefers-color-scheme: dark) {
-    :root { --ink: #e8e8e8; --faint: #6a6a6a; --line: #2a2a2a; }
-    body { background: #141414; }
+    :root {
+      --ink: #ececec;
+      --bg: #141414;
+      --faint: #8a8a8a;
+      --line: #2e2e2e;
+      --accent: #7fb3e8;
+    }
   }
+
+  body { background: var(--bg); }
 
   * { box-sizing: border-box; }
 
@@ -134,7 +149,7 @@
   #menu {
     position: absolute;
     z-index: 10;
-    background: Canvas;
+    background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 6px;
     box-shadow: 0 6px 24px rgba(0, 0, 0, .12);
@@ -152,7 +167,7 @@
     text-align: left;
     border: 0;
     background: transparent;
-    color: inherit;
+    color: var(--ink);
     font: inherit;
     padding: .45rem .6rem;
     border-radius: 4px;
@@ -161,6 +176,7 @@
 
   #menu button:hover { background: rgba(128, 128, 128, .13); }
   #menu small { color: var(--faint); margin-left: .4rem; }
+  #menu button:hover small { color: var(--ink); }
 
   /* --- bar ---------------------------------------------------------- */
 
@@ -172,7 +188,7 @@
     align-items: center;
     padding: .8rem 1.5rem;
     border-top: 1px solid var(--line);
-    background: Canvas;
+    background: var(--bg);
     font-family: var(--sans);
     font-size: .9rem;
   }

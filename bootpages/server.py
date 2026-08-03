@@ -22,6 +22,7 @@ Run it:
 import argparse
 import json
 import os
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -168,12 +169,90 @@ class Handler(BaseHTTPRequestHandler):
         ))
 
 
-def serve(host="127.0.0.1", port=8080, database="data/bootpages.db"):
+LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost", ""})
+
+PUBLIC_WARNING = """\
+Refusing to bind to {host}.
+
+createAccount is open on this build: anyone who can reach this port can
+mint an account and publish permanent public pages. Binding to a loopback
+address is currently the only thing gating it, which is what
+docs/decisions.md calls network gating.
+
+If you meant it - you are behind a reverse proxy that authenticates, or on
+a network you control - say so explicitly:
+
+    python3 -m bootpages.server --host {host} --allow-public
+
+Nothing about this is a security control. It is a speed bump placed where
+an accident would otherwise be silent.
+"""
+
+
+def notify(state):
+    """
+    sd_notify by hand. One datagram to a unix socket, and a no-op anywhere
+    systemd is not watching - so running this from a terminal behaves
+    exactly the same as running it under the unit.
+    """
+
+    address = os.environ.get("NOTIFY_SOCKET")
+
+    if not address:
+        return
+
+    try:
+        import socket
+
+        if address.startswith("@"):          # abstract namespace
+            address = "\0" + address[1:]
+
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(address)
+            sock.sendall(state.encode())
+
+    except OSError:
+        pass
+
+
+def watchdog():
+    """
+    A server that has stopped answering still looks alive to Restart=always,
+    because the process is still there. This pings only while the listening
+    socket is healthy, so a wedged server stops the pings and systemd
+    restarts it.
+    """
+
+    window = int(os.environ.get("WATCHDOG_USEC", 0)) / 1_000_000
+
+    if not window:
+        return
+
+    def loop():
+        while True:
+            time.sleep(window / 2)          # half the interval, as documented
+            notify("WATCHDOG=1")
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+
+
+def serve(host="127.0.0.1", port=8080, database="data/bootpages.db",
+          allow_public=False):
+    if host not in LOOPBACK and not allow_public:
+        raise SystemExit(PUBLIC_WARNING.format(host=host))
+
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.db = store.connect(database)
 
     print(f"bootpages on http://{host}:{port}  (store: {database})")
     print("editor at /   ·  api at POST /<method>  ·  ctrl-c to stop")
+
+    if host not in LOOPBACK:
+        print("!! reachable beyond this machine, with createAccount open")
+
+    notify("READY=1")
+    watchdog()
 
     try:
         httpd.serve_forever()
@@ -181,16 +260,24 @@ def serve(host="127.0.0.1", port=8080, database="data/bootpages.db"):
     except KeyboardInterrupt:
         print("\nstopped")
 
+    finally:
+        notify("STOPPING=1")
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Run bootpages locally.")
+    parser = argparse.ArgumentParser(description="Run bootpages.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--db", default="data/bootpages.db")
+    parser.add_argument(
+        "--allow-public", action="store_true",
+        help="permit binding to a non-loopback address. createAccount is "
+             "open, so this exposes account creation to that network.",
+    )
 
     args = parser.parse_args()
 
-    serve(args.host, args.port, args.db)
+    serve(args.host, args.port, args.db, args.allow_public)
 
 
 if __name__ == "__main__":

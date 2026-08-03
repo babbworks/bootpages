@@ -1,0 +1,101 @@
+# Bootpages as a systemd service.
+#
+#   sudo cp bootpages.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now bootpages
+#   journalctl -u bootpages -f
+#
+# Assumes the repo at /opt/bootpages. There is no venv and no .env, because
+# there are no dependencies and no secrets - see docs/running.md.
+
+[Unit]
+Description=Bootpages - a store for portable declarative manifests
+Documentation=https://github.com/babbworks/bootpages
+After=network.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+
+User=bootpages
+Group=bootpages
+
+WorkingDirectory=/opt/bootpages
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+
+# The system interpreter, deliberately. Bootpages imports nothing outside
+# the standard library, so a venv would be an empty directory maintained
+# for the look of the thing. Being runnable by any Python without a working
+# package index is a property worth keeping.
+ExecStart=/usr/bin/python3 -m bootpages.server \
+    --host 127.0.0.1 \
+    --port 8080 \
+    --db /var/lib/bootpages/bootpages.db
+
+# LOOPBACK ON PURPOSE.
+#
+# createAccount is open on this build: anyone who can reach the port can
+# mint an account and publish permanent public pages. Binding to 127.0.0.1
+# is the whole of the gate - what docs/decisions.md calls network gating.
+#
+# To put this behind a real address, terminate TLS and authenticate in a
+# reverse proxy in front of it, and leave this line alone. The server
+# refuses a non-loopback bind unless --allow-public is passed, so widening
+# it has to be a deliberate act rather than a typo.
+
+Restart=always
+RestartSec=5
+
+# A server that has stopped answering still looks perfectly healthy to
+# Restart=always, because the process is still there. The watchdog is what
+# tells the difference: the server pings on a timer and silence is a
+# restart.
+WatchdogSec=120
+
+TimeoutStopSec=15
+
+# /var/lib/bootpages, created and owned by systemd. The SQLite file lives
+# here and it is the only thing on disk that matters - backing this service
+# up is copying one file, and restoring it is copying the file back.
+StateDirectory=bootpages
+StateDirectoryMode=0750
+
+# ---------------------------------------------------------------- hardening
+#
+# The service holds no credential, so there is nothing here worth stealing
+# except the pages themselves, which are public by design. The hardening is
+# to stop this being a foothold rather than to protect a secret.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+# Listening on 8080 needs no privilege, and AF_UNIX is for the watchdog
+# datagram back to systemd.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# A page is held in memory once while it is rendered. These are ceilings,
+# not budgets: hitting one is a bug, not a busy afternoon.
+MemoryMax=256M
+TasksMax=32
+CPUQuota=100%
+
+[Install]
+WantedBy=multi-user.target

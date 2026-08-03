@@ -140,6 +140,7 @@ fallback rendering all at once. They cannot drift apart.
 | [Vision and principles](docs/vision.md) | why this exists, and the reasoning that constrains it |
 | [Format](docs/format.md) | the node model, attribute families, canonical form, and lenses |
 | [Capability pages](docs/capability.md) | how a site publishes what it welcomes |
+| [Running it](docs/running.md) | terminal, systemd, and the gate |
 | [Conformance](docs/conformance.md) | what it means to *support* bootpages |
 | [Open decisions](docs/decisions.md) | what is not settled, and why |
 | [Roadmap](docs/roadmap.md) | the build, in order |
@@ -156,6 +157,14 @@ python3 -m bootpages.server        # http://127.0.0.1:8080
 python3 -m pytest
 ```
 
+As a service: `sudo ./install.sh`. No venv, no `.env`, no secret to place —
+see [running it](docs/running.md).
+
+**It binds to `127.0.0.1` and `createAccount` is open**, so the loopback
+bind is the entire gate. The server refuses a non-loopback address unless
+`--allow-public` is passed, which makes exposing account creation a
+deliberate act rather than a typo in a unit file.
+
 No dependencies — standard library only, `http.server` and `sqlite3`. A
 store whose promise is durability should be runnable in ten years by
 anyone with a Python interpreter and no working package index.
@@ -167,7 +176,7 @@ anyone with a Python interpreter and no working package index.
 | public rendering, view counting | done |
 | the editor | first version |
 | capability pages | designed, not built |
-| gating beyond binding to localhost | not built |
+| gating beyond the loopback bind | not built |
 
 The reference renderer implements **no modules**, deliberately. That makes
 it a [Level 0 consumer](docs/conformance.md), and it means every non-core
@@ -179,7 +188,3 @@ of it blocks building. Revision identity was the one that did, and it is
 settled: a `revision` counter for ordering, a labelled `digest` for content
 identity, and a canonical form so two parties anywhere can confirm they are
 looking at the same page.
-
-The first instance is gated by binding to localhost and nothing else. The
-API supports anonymous account creation; whether the world can reach it is
-a separate question, and the answer starts as no.
