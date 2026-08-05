@@ -3,9 +3,15 @@
 Bootpages binds to loopback and stays there. Everything below is about the
 thing in front of it.
 
-The target this was written against is a PowerBook G4 running Debian ports
-on 32-bit PowerPC, serving `page.babb.tel`. Most of it generalises; the
-parts that do not are marked.
+The target this was written against is a PowerBook G4 serving
+`page.babb.tel`: a 7447A with AltiVec, 2GB, running Debian forky/sid on
+32-bit big-endian PowerPC with Python 3.14 and nginx 1.30. Most of what
+follows generalises; the parts that do not are marked.
+
+The whole suite passes there, and a digest computed on that machine is
+byte-identical to one computed on x86_64 — which is the property page
+identity depends on, and the one worth re-checking on any new
+architecture.
 
 ---
 
@@ -105,9 +111,10 @@ What is in it and why, beyond the two origins:
 - **No `Content-Security-Policy`.** `server.py` already sets one per role.
   Two policies means the browser enforces the intersection, which is how a
   policy tightens by accident.
-- **HTTP/2 as a `listen` parameter**, not `http2 on;`. That directive
-  arrived in nginx 1.25.1 and bookworm ships 1.22.1, where it fails
-  `nginx -t` as unknown.
+- **`http2 on;`**, which needs nginx 1.25.1 or later. The PowerBook runs
+  forky/sid with 1.30.4. On an older nginx — bookworm ships 1.22.1 — that
+  directive is unknown and `nginx -t` fails; use `listen 443 ssl http2;`
+  there instead.
 
 ---
 
