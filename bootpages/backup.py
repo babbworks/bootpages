@@ -177,7 +177,46 @@ def create(db_path, dest, keep=30, require_mount=False, now=None):
     return target
 
 
-def prune(dest, keep):
-    """Replaced in Task 2."""
+def existing(dest):
+    """
+    Every backup in a directory, newest first.
 
-    return []
+    Ordered by name rather than mtime. The stamp sorts lexicographically in
+    timestamp order, so this stays correct across a copy to a filesystem
+    that did not preserve modification times - which is exactly what
+    happens when these move to an external drive.
+    """
+
+    if not os.path.isdir(dest):
+        return []
+
+    found = [
+        os.path.join(dest, name)
+        for name in os.listdir(dest)
+        if name.startswith(PREFIX) and name.endswith(SUFFIX)
+    ]
+
+    return sorted(found, reverse=True)
+
+
+def prune(dest, keep):
+    """
+    Delete all but the newest `keep`. Returns what was removed.
+
+    Runs after the new copy is written and verified, so the newest is never
+    the one at risk.
+    """
+
+    if keep < 1:
+        raise BackupError("keep must be at least 1")
+
+    doomed = existing(dest)[keep:]
+
+    for path in doomed:
+        try:
+            os.remove(path)
+
+        except OSError as problem:
+            raise BackupError(f"cannot remove {path}: {problem}")
+
+    return doomed

@@ -106,3 +106,66 @@ def test_refuses_when_the_drive_is_not_mounted(live, tmp_path):
         backup.create(live, str(dest), require_mount=True)
 
     assert not dest.exists(), "must not create the directory it refused"
+
+
+# ------------------------------------------------------------------ pruning
+
+
+def _stamped(dest, *stamps):
+    dest.mkdir(parents=True, exist_ok=True)
+
+    for stamp in stamps:
+        (dest / f"bootpages-{stamp}.db").write_bytes(b"")
+
+
+def test_existing_lists_newest_first(tmp_path):
+    dest = tmp_path / "backups"
+    _stamped(dest, "20260101T000000Z", "20260103T000000Z", "20260102T000000Z")
+
+    names = [os.path.basename(p) for p in backup.existing(str(dest))]
+
+    assert names == [
+        "bootpages-20260103T000000Z.db",
+        "bootpages-20260102T000000Z.db",
+        "bootpages-20260101T000000Z.db",
+    ]
+
+
+def test_existing_ignores_files_it_did_not_write(tmp_path):
+    dest = tmp_path / "backups"
+    _stamped(dest, "20260101T000000Z")
+    (dest / "notes.txt").write_bytes(b"")
+    (dest / "bootpages.db").write_bytes(b"")
+
+    assert len(backup.existing(str(dest))) == 1
+
+
+def test_prune_keeps_the_newest(tmp_path):
+    dest = tmp_path / "backups"
+    _stamped(dest, "20260101T000000Z", "20260102T000000Z", "20260103T000000Z")
+
+    removed = backup.prune(str(dest), keep=2)
+
+    remaining = sorted(p.name for p in dest.iterdir())
+    assert remaining == [
+        "bootpages-20260102T000000Z.db",
+        "bootpages-20260103T000000Z.db",
+    ]
+    assert len(removed) == 1
+
+
+def test_prune_never_removes_the_copy_just_written(live, tmp_path):
+    dest = str(tmp_path / "backups")
+
+    for moment in range(1780000000, 1780000005):
+        newest = backup.create(live, dest, keep=2, now=moment)
+
+    assert os.path.exists(newest)
+    assert len(backup.existing(dest)) == 2
+
+
+def test_prune_on_an_empty_directory_is_quiet(tmp_path):
+    dest = tmp_path / "backups"
+    dest.mkdir()
+
+    assert backup.prune(str(dest), keep=30) == []
