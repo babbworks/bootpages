@@ -70,6 +70,15 @@ class Instance:
         self.pages_host = pages_host or env("BOOTPAGES_PAGES_HOST", self.host)
         self.pages_port = int(pages_port or env("BOOTPAGES_PAGES_PORT", "8081"))
 
+        # Behind a reverse proxy the public address is not something this
+        # process can work out. It serves plain HTTP on loopback while the
+        # world sees HTTPS on a name nothing here has been told, so the one
+        # URL that must be right has to be given rather than derived.
+        #
+        # Trailing slash stripped because api.py builds f"{pages_url}/{path}"
+        # and a double slash would end up in every published link.
+        self._pages_url = (pages_url or "").rstrip("/")
+
         self.database = database or env("BOOTPAGES_DB", "data/bootpages.db")
         self.allow_public = allow_public
 
@@ -138,12 +147,18 @@ class Instance:
         Every API response reports this rather than whatever Host the
         request arrived on, so the editor hands out links to the pages
         origin rather than back to itself.
+
+        Given outright wins, then the environment, then the local bind -
+        the last of which is only ever right when nothing is in front.
         """
+
+        if self._pages_url:
+            return self._pages_url
 
         return env(
             "BOOTPAGES_PAGES_URL",
             f"http://{self.pages_host or '127.0.0.1'}:{self.pages_port}",
-        )
+        ).rstrip("/")
 
     @property
     def editor_url(self):

@@ -176,6 +176,42 @@ def test_pages_url_is_its_own_origin():
     assert instance.editor_url.endswith(":8080")
 
 
+def test_pages_url_can_be_given_outright(monkeypatch):
+    """
+    Behind a reverse proxy the public address is not one this process can
+    work out: it serves loopback HTTP and the world sees HTTPS on a name
+    nothing here has been told. api.py reports this URL to clients, so
+    getting it wrong hands out links to 127.0.0.1.
+    """
+
+    monkeypatch.delenv("BOOTPAGES_PAGES_URL", raising=False)
+
+    instance = Instance(pages_url="https://pages.babb.tel")
+
+    assert instance.pages_url == "https://pages.babb.tel"
+    assert instance.describe()["pages_url"] == "https://pages.babb.tel"
+
+
+def test_an_explicit_pages_url_beats_the_environment(monkeypatch):
+    monkeypatch.setenv("BOOTPAGES_PAGES_URL", "https://from-the-environment")
+
+    assert Instance().pages_url == "https://from-the-environment"
+    assert Instance(pages_url="https://argued").pages_url == "https://argued"
+
+
+def test_a_trailing_slash_is_not_carried_into_page_urls(monkeypatch):
+    """
+    api.py builds f"{pages_url}/{path}". A trailing slash there produces a
+    double slash in every published link, which is the kind of thing nobody
+    notices until it is in someone else's database.
+    """
+
+    monkeypatch.delenv("BOOTPAGES_PAGES_URL", raising=False)
+
+    assert Instance(pages_url="https://pages.babb.tel/").pages_url == (
+        "https://pages.babb.tel")
+
+
 def test_describe_carries_no_secret():
     described = Instance().describe()
 
