@@ -19,7 +19,9 @@ evidence.
 """
 
 import os
+import shutil
 import sqlite3
+import subprocess
 import time
 
 PREFIX = "bootpages-"
@@ -220,3 +222,73 @@ def prune(dest, keep):
             raise BackupError(f"cannot remove {path}: {problem}")
 
     return doomed
+
+
+# ------------------------------------------------------------------ restore
+
+
+def service_active(unit="bootpages"):
+    """
+    Whether systemd is currently running the service.
+
+    False anywhere systemd is absent, which is the right answer for a
+    developer restoring into a checkout on their laptop.
+    """
+
+    try:
+        finished = subprocess.run(
+            ["systemctl", "is-active", "--quiet", unit],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    except OSError:
+        return False
+
+    return finished.returncode == 0
+
+
+def restore(backup_path, db_path, force=False):
+    """
+    Put a backup back. Returns where the superseded database was moved.
+
+    Refuses while the service is running: SQLite will happily let two
+    processes disagree about what the file contains, and the resulting
+    state is worse than whatever prompted the restore.
+
+    The database being replaced is moved aside rather than overwritten. If
+    this turns out to be the wrong backup, the thing it replaced still
+    exists.
+    """
+
+    if not force and service_active():
+        raise BackupError(
+            "bootpages is running. Stop it first:\n"
+            "    sudo systemctl stop bootpages\n"
+            "or pass --force if systemd is not managing this database."
+        )
+
+    verify(backup_path)
+
+    superseded = ""
+
+    if os.path.exists(db_path):
+        superseded = f"{db_path}.superseded-{time.strftime(STAMP, time.gmtime())}"
+        os.rename(db_path, superseded)
+
+    # The sidecars belong to the database that just moved aside. Leaving
+    # them next to a restored file is how a restore appears to work and
+    # then serves the wrong bytes.
+    for sidecar in ("-wal", "-shm"):
+        stale = db_path + sidecar
+
+        if os.path.exists(stale):
+            os.remove(stale)
+
+    try:
+        shutil.copyfile(backup_path, db_path)
+
+    except OSError as problem:
+        raise BackupError(f"cannot write {db_path}: {problem}")
+
+    return superseded

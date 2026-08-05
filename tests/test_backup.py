@@ -169,3 +169,69 @@ def test_prune_on_an_empty_directory_is_quiet(tmp_path):
     dest.mkdir()
 
     assert backup.prune(str(dest), keep=30) == []
+
+
+# ------------------------------------------------------------------ restore
+
+
+def test_restore_refuses_while_the_service_is_running(live, tmp_path, monkeypatch):
+    """
+    Restoring underneath a live writer turns one problem into two.
+    """
+
+    copy = backup.create(live, str(tmp_path / "backups"))
+    monkeypatch.setattr(backup, "service_active", lambda unit="bootpages": True)
+
+    with pytest.raises(backup.BackupError, match="running"):
+        backup.restore(copy, live)
+
+
+def test_restore_puts_the_bytes_back(live, tmp_path, monkeypatch):
+    monkeypatch.setattr(backup, "service_active", lambda unit="bootpages": False)
+
+    copy = backup.create(live, str(tmp_path / "backups"))
+
+    target = str(tmp_path / "restored.db")
+    backup.restore(copy, target)
+
+    checked = sqlite3.connect(target)
+    assert checked.execute("SELECT count(*) FROM accounts").fetchone()[0] == 1
+    checked.close()
+
+
+def test_restore_moves_the_old_database_aside(live, tmp_path, monkeypatch):
+    """
+    Never overwrite in place. If the backup turns out to be the wrong one,
+    the thing it replaced must still exist.
+    """
+
+    monkeypatch.setattr(backup, "service_active", lambda unit="bootpages": False)
+
+    copy = backup.create(live, str(tmp_path / "backups"))
+    superseded = backup.restore(copy, live)
+
+    assert superseded
+    assert os.path.exists(superseded)
+
+
+def test_restore_refuses_a_corrupt_backup(live, tmp_path, monkeypatch):
+    monkeypatch.setattr(backup, "service_active", lambda unit="bootpages": False)
+
+    copy = backup.create(live, str(tmp_path / "backups"))
+
+    with open(copy, "r+b") as handle:
+        handle.truncate(os.path.getsize(copy) // 2)
+
+    with pytest.raises(backup.BackupError):
+        backup.restore(copy, live)
+
+
+def test_force_overrides_the_service_guard(live, tmp_path, monkeypatch):
+    monkeypatch.setattr(backup, "service_active", lambda unit="bootpages": True)
+
+    copy = backup.create(live, str(tmp_path / "backups"))
+    target = str(tmp_path / "forced.db")
+
+    backup.restore(copy, target, force=True)
+
+    assert os.path.exists(target)
