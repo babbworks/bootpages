@@ -119,7 +119,7 @@ Each step gates the next. Anything that fails aborts the deploy.
 | 2 | Preflight the backup destination | missing, unwritable, or not a mountpoint when required |
 | 3 | Free-space check | less than 2× the database size available |
 | 4 | `backup create` (online, WAL-safe) | copy fails |
-| 5 | `integrity_check` + page count on the **copy** | not `ok`, or zero pages |
+| 5 | `integrity_check` + row counts on the **copy** | not `ok`, or counts do not match the source |
 | 6 | Prune to newest 30 | — |
 | 7 | Dirty-tree check, `git fetch`, checkout ref | production tree edited by hand |
 | 8 | Byte-compile check on the new code | it does not parse |
@@ -131,6 +131,10 @@ fast, and if they fail nothing has been changed to need restoring.
 
 Step 5 is what makes this more than hope. Verifying every copy on every run
 costs milliseconds and turns each backup from a hypothesis into evidence.
+
+The invariant is that the copy's row counts **match the source's** — not
+that they are non-zero. A freshly installed instance legitimately has no
+pages, and a non-zero rule would fail its very first deploy.
 
 Rollback falls out for free: the pre-restart backup plus a git checkout of
 the previous ref restores both halves of the system.
