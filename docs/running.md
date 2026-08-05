@@ -56,16 +56,42 @@ library should not carry an empty virtualenv for the look of the thing.
 ```
 
 The database is the only thing on disk that matters. Backing this service
-up is copying one file; restoring it is copying the file back. For a store
-whose entire promise is that the bytes come back, that is worth more than
-any amount of operational cleverness.
+up is one file and restoring it is that file back — a shape worth more, for
+a store whose entire promise is that the bytes come back, than any amount
+of operational cleverness.
+
+One caveat, and it is not a small one: **that file cannot be copied with
+`cp` while the service is running.** The store runs in WAL mode, so a
+committed row lives in a `-wal` sidecar until a checkpoint, and a plain
+copy captures a torn database that looks fine until the day it is needed.
+`python3 -m bootpages.backup` exists for that reason. See Backups below.
 
 ### Updating
 
 ```sh
-sudo git -C /opt/bootpages pull
-sudo systemctl restart bootpages
+sudo /opt/bootpages/deploy.sh          # on the machine
+./deploy.sh user@powerbook             # from anywhere with ssh
 ```
+
+Tests run first, then a verified backup is taken, and only then does any
+code move.
+
+Deploying to a host runs the suite **twice**: here, then there. They are
+not the same suite. `tests/test_editor.py` skips without node, and node has
+no 32-bit PowerPC build — so on the PowerBook that test silently vanishes
+while everything still reports green. This machine covers the editor; the
+target covers the architecture.
+
+Needs `python3-pytest` on the machine being deployed to. That is a deploy
+dependency, not a runtime one — the service itself still imports nothing
+outside the standard library.
+
+It reinstalls the unit but never the drop-in. Mode and port changes stay
+with `install.sh`, which is the thing that was told what they are.
+
+Nothing falls back. If the tests fail, the backup fails, or the service
+does not answer afterwards, it stops and prints the command to roll back
+and the backup to roll back to.
 
 ---
 
