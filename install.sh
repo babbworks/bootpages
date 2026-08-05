@@ -23,6 +23,7 @@ SVC_USER="${BOOTPAGES_USER:-bootpages}"
 MODE=""
 PORT=""
 PAGES_PORT=""
+PAGES_URL=""
 ASSUME_YES=0
 
 while [ $# -gt 0 ]; do
@@ -30,13 +31,21 @@ while [ $# -gt 0 ]; do
     --mode)        MODE="$2"; shift 2 ;;
     --port)        PORT="$2"; shift 2 ;;
     --pages-port)  PAGES_PORT="$2"; shift 2 ;;
+    --pages-url)   PAGES_URL="$2"; shift 2 ;;
     --yes|-y)      ASSUME_YES=1; shift ;;
     -h|--help)
       cat <<'USAGE'
-sudo ./install.sh [--mode open|invited|admin] [--port N] [--pages-port N] [--yes]
+sudo ./install.sh [--mode open|invited|admin] [--port N] [--pages-port N]
+                  [--pages-url URL] [--yes]
 
 Prompts for anything not given. --yes takes the defaults and skips every
 confirmation, for unattended runs.
+
+--pages-url is the public address of published pages, e.g.
+https://page.example. Give it whenever a reverse proxy is in front: the
+API builds every link it hands out from this value, and a server that
+only ever sees loopback HTTP cannot work it out. Omit it when reaching
+this machine directly.
 USAGE
       exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
@@ -51,7 +60,12 @@ ask() {
 
   if [ "$ASSUME_YES" = 1 ] || [ -n "${!__var}" ]; then
     [ -z "${!__var}" ] && printf -v "$__var" '%s' "$__default"
-    return
+
+    # Explicitly zero. A bare `return` carries the status of the test
+    # above, which is 1 whenever the value was already set - and under
+    # `set -e` that killed the whole install, silently, the moment anyone
+    # passed a flag on the command line.
+    return 0
   fi
 
   read -r -p "$__prompt [$__default]: " __reply < /dev/tty || true
@@ -120,6 +134,32 @@ fi
 ask PORT "editor port" "8080"
 ask PAGES_PORT "published pages port" "8081"
 
+# The one setting this process cannot work out for itself.
+#
+# Every API response reports where a published page lives. Behind a
+# reverse proxy that address is https://something on a name nothing here
+# has been told, while the server sees only loopback HTTP - so leaving
+# this blank on a public instance publishes links to 127.0.0.1 and looks
+# perfectly healthy doing it.
+#
+# Blank is correct when nothing is in front, which is why it is allowed.
+cat <<'PAGESURL'
+
+  If a reverse proxy will serve published pages under a real name, give
+  that address now - e.g. https://page.example. Every link the API hands
+  out is built from it.
+
+  Leave blank if you are reaching this machine directly.
+
+PAGESURL
+
+ask PAGES_URL "public URL for published pages" ""
+
+case "$PAGES_URL" in
+  ""|https://*|http://*) ;;
+  *) echo "pages URL must start with http:// or https://" >&2; exit 1 ;;
+esac
+
 if [ "$PORT" = "$PAGES_PORT" ]; then
   echo "the editor and pages must not share a port - that separation is" >&2
   echo "what stops a script inside a page reading stored tokens" >&2
@@ -180,6 +220,14 @@ Environment=BOOTPAGES_MODE=$MODE
 Environment=BOOTPAGES_PORT=$PORT
 Environment=BOOTPAGES_PAGES_PORT=$PAGES_PORT
 CONF
+
+# Only written when given. An empty value here would override the sensible
+# local default with nothing, which is worse than being absent.
+if [ -n "$PAGES_URL" ]; then
+  cat >> /etc/systemd/system/bootpages.service.d/instance.conf <<CONF
+Environment=BOOTPAGES_PAGES_URL=$PAGES_URL
+CONF
+fi
 
 systemctl daemon-reload
 

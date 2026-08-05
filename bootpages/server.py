@@ -465,6 +465,13 @@ def main():
     parser.add_argument("--port", type=int)
     parser.add_argument("--pages-host")
     parser.add_argument("--pages-port", type=int)
+    parser.add_argument(
+        "--pages-url",
+        help="the public address of published pages, e.g. "
+             "https://page.example. Required behind a reverse proxy: the "
+             "API reports this URL to clients, and a process serving "
+             "loopback HTTP cannot work out the name the world uses.",
+    )
     parser.add_argument("--db")
     parser.add_argument("--name")
     parser.add_argument("--description")
@@ -487,6 +494,7 @@ def main():
             name=args.name, description=args.description, mode=args.mode,
             contact=args.contact, host=args.host, port=args.port,
             pages_host=args.pages_host, pages_port=args.pages_port,
+            pages_url=args.pages_url,
             database=args.db, allow_public=args.allow_public,
         )
 

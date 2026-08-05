@@ -16,6 +16,7 @@ Editor at <http://127.0.0.1:8080>, store at `data/bootpages.db`.
 --host          default 127.0.0.1
 --port          default 8080          the editor and the API
 --pages-port    default 8081          published pages
+--pages-url     default derived       public address of published pages
 --mode          default admin         open | invited | admin
 --db            default data/bootpages.db
 --name --description --contact        what this instance calls itself
@@ -25,6 +26,14 @@ Editor at <http://127.0.0.1:8080>, store at `data/bootpages.db`.
 Every one of those also reads from the environment
 (`BOOTPAGES_MODE`, `BOOTPAGES_PORT`, …), which is how the service is
 configured.
+
+`--pages-url` is the one setting the server cannot work out for itself.
+Every API response reports where a published page lives, and behind a
+reverse proxy that is `https://` on a name this process has never been
+told, while it sees only loopback HTTP. Leave it unset on a public
+instance and the API publishes links to `127.0.0.1` while looking
+perfectly healthy. `install.sh` asks for it; set it there or in the
+drop-in.
 
 No dependencies. Standard library only — `http.server`, `sqlite3`,
 `hashlib`, `json`. There is nothing to install and nothing to activate.
