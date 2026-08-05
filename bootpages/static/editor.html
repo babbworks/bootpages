@@ -141,8 +141,41 @@
     color: var(--accent);
   }
 
-  .block[data-type="hr"] { border-top: 1px solid var(--line); margin: 2rem 0; }
-  .block[data-type="hr"] textarea { display: none; }
+  .block[data-type="hr"] {
+    border-top: 1px solid var(--line);
+    margin: 2rem 0;
+    border-radius: 1px;
+    transition: box-shadow .12s, border-color .12s;
+  }
+
+  /* A selected divider has to look selected. Its textarea is invisible, so
+     without this the only feedback for clicking one is that Backspace
+     happens to work - which is no feedback at all. The halo is drawn
+     outside the element because the element itself has no height. */
+  .block[data-type="hr"]:focus-within {
+    border-top-color: var(--accent);
+    box-shadow: 0 0 0 .5rem rgba(128, 128, 128, .16);
+  }
+
+  /* Invisible, but still focusable and still covering the rule. It used to
+     be display:none, which meant a divider could never be selected - and
+     since the only way to remove a block is Backspace inside its textarea,
+     a divider once added could never be deleted. */
+  .block[data-type="hr"] textarea {
+    position: absolute;
+    inset: -0.7rem 0;
+    height: auto;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  /* A placeholder on every empty block turns two Returns into a column of
+     "Write something…". Show it only where the cursor is - and on the very
+     first block of an empty page, which is the one time it is an
+     invitation rather than noise. */
+  .block textarea::placeholder { color: transparent; }
+  .block:focus-within textarea::placeholder { color: var(--faint); }
+  #blocks .block:only-child textarea::placeholder { color: var(--faint); }
 
   /* --- menu --------------------------------------------------------- */
 
@@ -360,194 +393,9 @@
 
 <div id="veil" hidden><div class="card" id="card"></div></div>
 
-<script>
-// The block vocabulary. Only core tags for now - this renderer implements
-// no modules, so everything here maps straight onto something Telegraph
-// would also accept. When capability pages arrive, a site's declared
-// modules get appended to this list at runtime.
-const TYPES = [
-  {type: "p",          label: "Text",       hint: "plain paragraph"},
-  {type: "h3",         label: "Heading"},
-  {type: "h4",         label: "Subheading"},
-  {type: "blockquote", label: "Quote"},
-  {type: "pre",        label: "Code"},
-  {type: "li",         label: "List item"},
-  {type: "img",        label: "Image",      hint: "paste a URL"},
-  {type: "table",      label: "Table",      hint: "paste from a spreadsheet"},
-  {type: "hr",         label: "Divider"},
-];
-
-const PLACEHOLDER = {
-  p: "Write something…",
-  h3: "Heading",
-  h4: "Subheading",
-  blockquote: "Quote",
-  pre: "Code",
-  li: "List item",
-  img: "https://example.org/photo.jpg",
-  table: "Paste tab-separated rows, or type them with tabs",
-  hr: "",
-};
-
-const $ = (id) => document.getElementById(id);
-
-// ------------------------------------------------------------- accounts
-//
-// The browser holds a list of tokens. They have NO server-side association
-// with each other - the store cannot tell that two of them are yours, and
-// there is no endpoint that would let it. This is a privacy property, not
-// just a convenience, and it rests on one rule:
-//
-//   ONE TOKEN PER REQUEST, EVER.
-//
-// Never send two together, never build a call that accepts several. The
-// moment the client correlates them the property is gone retroactively,
-// for every account already created.
-
-const REMEMBERED = "bootpages.accounts";
-
-const state = {
-  instance: null,   // what getInstanceInfo said
-  accounts: [],     // {token, short_name, author_name, remembered}
-  current: 0,
-  path: null,       // the page being edited, if any
-};
-
-function loadAccounts() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(REMEMBERED) || "[]");
-    state.accounts = saved.map((a) => ({...a, remembered: true}));
-  } catch (problem) {
-    state.accounts = [];
-  }
-}
-
-// Only remembered accounts are written back. An account the author chose
-// not to remember lives in memory and disappears when the tab does.
-function saveAccounts() {
-  const keep = state.accounts
-    .filter((a) => a.remembered)
-    .map(({token, short_name, author_name}) => ({token, short_name, author_name}));
-
-  localStorage.setItem(REMEMBERED, JSON.stringify(keep));
-}
-
-function account() {
-  return state.accounts[state.current] || null;
-}
-
-function addAccount(entry, remembered) {
-  state.accounts.push({...entry, remembered});
-  state.current = state.accounts.length - 1;
-  saveAccounts();
-  paintBar();
-}
-
-// -------------------------------------------------------------- publish
-
-async function publish() {
-  const who = account();
-  if (!who) return welcome();
-
-  const status = $("status");
-  status.textContent = "publishing…";
-
-  try {
-    const params = {
-      access_token: who.token,          // one token, never a list
-      title: titleField.value || "Untitled",
-      author_name: bylineField.value || who.author_name || "",
-      content: JSON.stringify(toNodes()),
-    };
-
-    const page = state.path
-      ? await call("editPage", {...params, path: state.path})
-      : await call("createPage", params);
-
-    state.path = page.path;
-    history.replaceState(null, "", "/?edit=" + page.path);
-
-    // The link points at the pages origin, which the server decides - the
-    // editor never guesses where a page lives.
-    status.innerHTML =
-      `<a href="${escapeHtml(page.url)}" target="_blank">${escapeHtml(page.path)}</a>` +
-      ` · revision ${page.revision} · ${escapeHtml(page.digest.slice(0, 18))}…`;
-
-  } catch (problem) {
-    status.textContent = explain(problem);
-  }
-}
-
-async function load(path) {
-  const page = await call("getPage", {path, return_content: "true"});
-
-  state.path = page.path;
-  titleField.value = page.title;
-  bylineField.value = page.author_name || "";
-  grow(titleField);
-  grow(bylineField);
-  fromNodes(page.content || []);
-
-  history.replaceState(null, "", "/?edit=" + page.path);
-  $("status").innerHTML =
-    `<a href="${escapeHtml(page.url)}" target="_blank">${escapeHtml(page.path)}</a>` +
-    ` · revision ${page.revision}`;
-}
-
-$("publish").onclick = publish;
-$("new").onclick = () => { location.href = "/"; };
-$("pages").onclick = () =>
-  ($("sheet").hidden ? pagesSheet() : closeSheet());
-$("who").onclick = () =>
-  ($("sheet").hidden ? accountsSheet() : closeSheet());
-
-// A click anywhere else closes whatever is open. The veil is deliberately
-// not dismissable this way - the first-run card has nothing behind it yet.
-document.addEventListener("click", (event) => {
-  if (!event.target.closest("#sheet") && !event.target.closest("#bar")) {
-    closeSheet();
-  }
-});
-
-// ------------------------------------------------------------------ boot
-
-function ready() {
-  paintBar();
-
-  const editing = new URLSearchParams(location.search).get("edit");
-
-  if (editing && !state.path) {
-    load(editing).catch((problem) => {
-      $("status").textContent = explain(problem);
-      if (!$("blocks").children.length) makeBlock("p");
-    });
-  } else if (!$("blocks").children.length) {
-    makeBlock("p");
-    titleField.focus();
-  }
-}
-
-async function boot() {
-  try {
-    // Asked before anything is drawn. The instance decides what the first
-    // screen offers - this file does not know whether accounts can be
-    // created here until it is told.
-    state.instance = await call("getInstanceInfo", {});
-  } catch (problem) {
-    state.instance = {name: "Bootpages", description: "", mode: "admin", contact: ""};
-  }
-
-  document.title = state.instance.name;
-
-  loadAccounts();
-  paintBar();
-
-  if (!state.accounts.length) {
-    welcome();
-  } else {
-    ready();
-  }
-}
-
-boot();
-</script>
+<!--
+  The behaviour lives in editor.js rather than inline. Two files instead of
+  one, still with no build step - and the JS can be checked on its own,
+  which a wall of inline script cannot.
+-->
+<script src="/static/editor.js"></script>
