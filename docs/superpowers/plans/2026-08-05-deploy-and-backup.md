@@ -917,6 +917,19 @@ die() { printf '\n!! %s\n' "$*" >&2; exit 1; }
 # ------------------------------------------------------------------ remote
 
 if [ "$HOST" != "local" ]; then
+  # Tests HERE before tests THERE, because they are not the same tests.
+  #
+  # tests/test_editor.py skips when node is absent, and node has no 32-bit
+  # PowerPC build - so on the target that test silently vanishes while the
+  # suite still reports success. editor.js is the largest file in this
+  # project and its own docstring records an edit that deleted half of it
+  # while every syntax check still passed.
+  #
+  # So this machine covers the editor, and the target covers the
+  # architecture. Neither one alone is the suite.
+  say "tests here first, where node exists"
+  python3 -m pytest -q -rs || die "tests failed here; nothing was sent"
+
   say "deploying to $HOST"
 
   # Forward the configuration rather than assuming the remote shell has it.
@@ -936,8 +949,16 @@ fi
 
 [ -d "$DIR/.git" ] || die "$DIR is not a git checkout. Run install.sh first."
 
+# The only thing this needs that the service does not. bootpages imports
+# nothing outside the standard library at runtime and that stays true;
+# deploying it is what wants a test runner.
+python3 -c 'import pytest' 2>/dev/null ||
+  die "pytest is not installed. On Debian:  apt-get install python3-pytest"
+
+# -rs names what skipped. A test that quietly stopped running is not a
+# passing test, and on this target test_editor.py always skips.
 say "tests first, always"
-( cd "$DIR" && python3 -m pytest -q ) || die "tests failed; nothing changed"
+( cd "$DIR" && python3 -m pytest -q -rs ) || die "tests failed; nothing changed"
 
 # ------------------------------------------------------------------- backup
 #
@@ -1040,9 +1061,17 @@ sudo /opt/bootpages/deploy.sh          # on the machine
 ```
 
 Tests run first, then a verified backup is taken, and only then does any
-code move. Given a host, deploy.sh copies the work to that machine and runs
-there — so the tests run on the architecture being deployed to, which
-matters when that is a 32-bit PowerPC laptop and your desk is not.
+code move.
+
+Deploying to a host runs the suite **twice**: here, then there. They are
+not the same suite. `tests/test_editor.py` skips without node, and node has
+no 32-bit PowerPC build — so on the PowerBook that test silently vanishes
+while everything still reports green. This machine covers the editor; the
+target covers the architecture.
+
+Needs `python3-pytest` on the machine being deployed to. That is a deploy
+dependency, not a runtime one — the service itself still imports nothing
+outside the standard library.
 
 It reinstalls the unit but never the drop-in. Mode and port changes stay
 with `install.sh`, which is the thing that was told what they are.
