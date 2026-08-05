@@ -93,6 +93,52 @@ Nothing falls back. If the tests fail, the backup fails, or the service
 does not answer afterwards, it stops and prints the command to roll back
 and the backup to roll back to.
 
+### Backups
+
+```sh
+systemctl list-timers bootpages-backup      # when it last ran, when it runs next
+python3 -m bootpages.backup list            # what exists
+python3 -m bootpages.backup verify PATH     # prove one is readable
+```
+
+Daily, plus one before every deploy. Thirty are kept. Each copy is verified
+against the source as it is written — a backup that has never been read is
+a hypothesis, and checking costs milliseconds.
+
+Taken with SQLite's online backup, not `cp`, for the WAL reason above.
+
+Restoring:
+
+```sh
+sudo systemctl stop bootpages
+sudo -u bootpages python3 -m bootpages.backup restore /var/backups/bootpages/bootpages-....db
+sudo systemctl start bootpages
+```
+
+It refuses while the service is running, and moves the database it replaces
+aside rather than overwriting it.
+
+**An external drive.** Set the destination and require it to be mounted:
+
+```
+BOOTPAGES_BACKUP_DIR=/mnt/bootpages-backups
+BOOTPAGES_BACKUP_REQUIRE_MOUNT=1
+```
+
+in a drop-in at `/etc/systemd/system/bootpages-backup.service.d/`, and in
+the environment deploy.sh runs with. Add the mount to `ReadWritePaths=` in
+the same drop-in, or the sandbox will refuse the write.
+
+With the drive absent, a backup **fails** rather than falling back to the
+internal disk. A path under a mountpoint exists whether or not anything is
+mounted on it, so falling back is how you come to believe you have months
+of external backups that were never written.
+
+**Still missing: a copy that is not in this room.** Both tiers live on one
+machine behind one power supply. They survive a bad edit and a dead disk;
+they do not survive the building. See
+`docs/superpowers/specs/2026-08-05-deploy-and-backup-design.md`.
+
 ---
 
 ## Two origins

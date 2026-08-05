@@ -124,6 +124,8 @@ python3 -m compileall -q "$DIR/bootpages" >/dev/null ||
 say "refreshing the unit"
 
 install -m 644 "$DIR/bootpages.service" /etc/systemd/system/
+install -m 644 "$DIR/bootpages-backup.service" /etc/systemd/system/
+install -m 644 "$DIR/bootpages-backup.timer" /etc/systemd/system/
 systemctl daemon-reload
 
 # ------------------------------------------------------------------ restart

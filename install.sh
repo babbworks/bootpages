@@ -162,6 +162,14 @@ say "installing the unit"
 
 install -m 644 "$DST/bootpages.service" /etc/systemd/system/
 
+# The scheduled backup. Separate units rather than a thread inside the
+# server, so a backup that fails is visible as a failed unit rather than a
+# line in a log nobody reads.
+install -m 644 "$DST/bootpages-backup.service" /etc/systemd/system/
+install -m 644 "$DST/bootpages-backup.timer" /etc/systemd/system/
+
+install -d -o "$SVC_USER" -g "$SVC_USER" -m 0750 /var/backups/bootpages
+
 # The choices above become a drop-in rather than edits to the unit, so a
 # `git pull` never clobbers them and `systemctl cat` shows both.
 mkdir -p /etc/systemd/system/bootpages.service.d
@@ -177,10 +185,12 @@ systemctl daemon-reload
 
 confirm "enable and start bootpages now (and at boot)?" || {
   echo "installed but not started. systemctl enable --now bootpages"
+  echo "                            systemctl enable --now bootpages-backup.timer"
   exit 0
 }
 
 systemctl enable --now bootpages
+systemctl enable --now bootpages-backup.timer
 
 # ----------------------------------------------------------------- verify
 
