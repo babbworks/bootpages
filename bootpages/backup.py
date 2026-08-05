@@ -18,11 +18,14 @@ Verifying costs milliseconds and turns each backup from a hypothesis into
 evidence.
 """
 
+import argparse
 import os
 import shutil
 import sqlite3
 import subprocess
 import time
+
+from .config import Instance
 
 PREFIX = "bootpages-"
 SUFFIX = ".db"
@@ -292,3 +295,105 @@ def restore(backup_path, db_path, force=False):
         raise BackupError(f"cannot write {db_path}: {problem}")
 
     return superseded
+
+
+# ------------------------------------------------------------ command line
+
+DEFAULT_DIR = "/var/backups/bootpages"
+
+
+def cmd_create(args, instance):
+    written = create(
+        instance.database,
+        args.dest,
+        keep=args.keep,
+        require_mount=args.require_mount,
+    )
+
+    found = verify(written)
+    print(f"{written}  {found['pages']} pages, {found['accounts']} accounts")
+
+
+def cmd_verify(args, instance):
+    found = verify(args.path)
+    print(f"ok  {found['pages']} pages, {found['accounts']} accounts")
+
+
+def cmd_restore(args, instance):
+    superseded = restore(args.path, instance.database, force=args.force)
+
+    print(f"restored {args.path} -> {instance.database}")
+
+    if superseded:
+        print(f"previous database kept at {superseded}")
+
+
+def cmd_list(args, instance):
+    found = existing(args.dest)
+
+    if not found:
+        print(f"no backups in {args.dest}")
+        return
+
+    for path in found:
+        size = os.path.getsize(path)
+        print(f"{os.path.basename(path):<40} {size:>12} bytes")
+
+
+COMMANDS = {
+    "create": cmd_create,
+    "verify": cmd_verify,
+    "restore": cmd_restore,
+    "list": cmd_list,
+}
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="python3 -m bootpages.backup",
+        description="Copies of the store, and proof that they are copies.",
+    )
+    parser.add_argument("--db", default=None)
+
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    creating = sub.add_parser("create", help="take a verified backup")
+    creating.add_argument("--dest", default=os.environ.get(
+        "BOOTPAGES_BACKUP_DIR", DEFAULT_DIR))
+    creating.add_argument("--keep", type=int, default=int(os.environ.get(
+        "BOOTPAGES_BACKUP_KEEP", 30)))
+    creating.add_argument(
+        "--require-mount",
+        action="store_true",
+        default=os.environ.get("BOOTPAGES_BACKUP_REQUIRE_MOUNT") == "1",
+        help="refuse if the destination is not a mountpoint - for the "
+             "external drive, where a missing disk must stop a deploy",
+    )
+
+    checking = sub.add_parser("verify", help="prove a backup is readable")
+    checking.add_argument("path")
+
+    restoring = sub.add_parser("restore", help="put a backup back")
+    restoring.add_argument("path")
+    restoring.add_argument(
+        "--force",
+        action="store_true",
+        help="restore even though the service looks active",
+    )
+
+    listing = sub.add_parser("list", help="what backups exist")
+    listing.add_argument("--dest", default=os.environ.get(
+        "BOOTPAGES_BACKUP_DIR", DEFAULT_DIR))
+
+    args = parser.parse_args()
+    instance = Instance(database=args.db)
+
+    try:
+        COMMANDS[args.command](args, instance)
+
+    except BackupError as problem:
+        raise SystemExit(f"error: {problem}")
+
+
+if __name__ == "__main__":
+    main()
