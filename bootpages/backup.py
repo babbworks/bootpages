@@ -1,0 +1,183 @@
+"""
+Copies of the store, and proof that they are copies.
+
+A page is a promise that the bytes come back, so a backup here is not
+operational hygiene - it is the mechanism by which that promise outlives
+the disk. docs/roadmap.md says the sharper version: a backup that has never
+been restored is a hypothesis.
+
+The one thing that must never be done is `cp`. store.py runs the database
+in WAL mode, so a committed row lives in a -wal sidecar until a checkpoint,
+and a file copy captures a torn database that looks fine until the day it
+is needed. SQLite's online backup reads a consistent snapshot from a live
+writer, and it is in the standard library at the same version floor the
+server already sets - so this costs no dependency.
+
+Every copy is verified as it is written, against the source it came from.
+Verifying costs milliseconds and turns each backup from a hypothesis into
+evidence.
+"""
+
+import os
+import sqlite3
+import time
+
+PREFIX = "bootpages-"
+SUFFIX = ".db"
+
+# Sorts lexicographically in timestamp order, which is why pruning needs no
+# mtime and survives a copy to a filesystem that did not preserve one.
+STAMP = "%Y%m%dT%H%M%SZ"
+
+
+class BackupError(Exception):
+    """Something that must stop a deploy. The message says what to do."""
+
+
+def destination(path, require_mount=False):
+    """
+    The backup directory, checked and created.
+
+    `require_mount` is for the external drive. A path under a mountpoint
+    exists whether or not anything is mounted there, so without this a
+    deploy silently writes to the internal disk while reporting an external
+    backup. Checked BEFORE the directory is created, so refusing leaves no
+    trace.
+    """
+
+    if require_mount and not os.path.ismount(path):
+        raise BackupError(
+            f"{path} is not mounted. Attach the drive, or unset "
+            f"BOOTPAGES_BACKUP_REQUIRE_MOUNT to back up to the internal "
+            f"disk for this run."
+        )
+
+    try:
+        os.makedirs(path, exist_ok=True)
+
+    except OSError as problem:
+        raise BackupError(f"cannot create {path}: {problem}")
+
+    if not os.access(path, os.W_OK):
+        raise BackupError(f"{path} is not writable")
+
+    return path
+
+
+def counts(connection):
+    """What a copy must match. Cheap enough to run on every backup."""
+
+    return {
+        "pages": connection.execute(
+            "SELECT count(*) FROM pages").fetchone()[0],
+        "accounts": connection.execute(
+            "SELECT count(*) FROM accounts").fetchone()[0],
+    }
+
+
+def verify(path):
+    """
+    Open a copy and prove it is one.
+
+    Returns its counts, so a caller can compare them with the source.
+    """
+
+    if not os.path.exists(path):
+        raise BackupError(f"{path} does not exist")
+
+    try:
+        db = sqlite3.connect(path)
+
+        try:
+            state = db.execute("PRAGMA integrity_check").fetchone()[0]
+
+            if state != "ok":
+                raise BackupError(f"{path}: integrity check said {state!r}")
+
+            return counts(db)
+
+        finally:
+            db.close()
+
+    except sqlite3.DatabaseError as problem:
+        raise BackupError(f"{path}: not a readable database ({problem})")
+
+
+def _name(dest, now=None):
+    """A free filename for this moment, or the next free one after it."""
+
+    stamp = time.strftime(STAMP, time.gmtime(now))
+    candidate = os.path.join(dest, PREFIX + stamp + SUFFIX)
+    attempt = 1
+
+    # Two backups in the same second is unusual but not an error, and
+    # refusing one would fail a deploy over a naming detail.
+    while os.path.exists(candidate):
+        attempt += 1
+        candidate = os.path.join(dest, f"{PREFIX}{stamp}-{attempt}{SUFFIX}")
+
+    return candidate
+
+
+def create(db_path, dest, keep=30, require_mount=False, now=None):
+    """
+    An online copy of the store, verified against it, with old copies
+    pruned. Returns the path written.
+
+    Verification and pruning are part of taking a backup rather than
+    separate steps, because an unchecked copy is the exact thing the
+    roadmap warns about.
+    """
+
+    if not os.path.exists(db_path):
+        raise BackupError(f"no database at {db_path}")
+
+    dest = destination(dest, require_mount)
+
+    need = os.path.getsize(db_path) * 2
+    space = os.statvfs(dest)
+
+    if space.f_bavail * space.f_frsize < need:
+        raise BackupError(
+            f"{dest} has less than {need} bytes free, which is twice the "
+            f"database. Free space or prune before deploying."
+        )
+
+    source = sqlite3.connect(db_path)
+    target = _name(dest, now)
+
+    try:
+        expected = counts(source)
+        copy = sqlite3.connect(target)
+
+        try:
+            source.backup(copy)
+
+        finally:
+            copy.close()
+
+    except sqlite3.DatabaseError as problem:
+        raise BackupError(f"backup of {db_path} failed: {problem}")
+
+    finally:
+        source.close()
+
+    found = verify(target)
+
+    if found != expected:
+        # Kept deliberately. A bad copy is evidence about what went wrong,
+        # and deleting it would destroy the only record.
+        raise BackupError(
+            f"{target} does not match the source: expected {expected}, "
+            f"found {found}. The copy has been kept for inspection."
+        )
+
+    prune(dest, keep)
+
+    return target
+
+
+def prune(dest, keep):
+    """Replaced in Task 2."""
+
+    return []
