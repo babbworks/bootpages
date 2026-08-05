@@ -99,12 +99,15 @@ class Handler(BaseHTTPRequestHandler):
     def instance(self):
         return self.server.instance
 
-    def reply(self, status, body, kind="text/html; charset=utf-8"):
+    def reply(self, status, body, kind="text/html; charset=utf-8", etag=None):
         payload = body.encode("utf-8") if isinstance(body, str) else body
 
         self.send_response(status)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(payload)))
+
+        if etag:
+            self.send_header("ETag", etag)
         # Every reply carries the same headers; only the body is withheld
         # on HEAD. A consumer checking whether a page still exists should
         # get the same answer either way.
@@ -126,6 +129,22 @@ class Handler(BaseHTTPRequestHandler):
     def reply_json(self, payload, status=200):
         self.reply(status, json.dumps(payload, ensure_ascii=False),
                    "application/json; charset=utf-8")
+
+    def not_modified(self, etag):
+        """
+        304: what identifies the page, and no body at all.
+
+        The cheapest possible answer - no render, no bytes on the wire.
+        On a home uplink that matters more than anything the CPU does.
+        """
+
+        self.send_response(304)
+        self.send_header("ETag", etag)
+
+        for name, value in COMMON_HEADERS:
+            self.send_header(name, value)
+
+        self.end_headers()
 
     def not_found(self):
         self.reply(404, "<h1>404</h1><p>No page at that address.</p>")
@@ -248,19 +267,74 @@ class Handler(BaseHTTPRequestHandler):
         if row["hidden"]:
             return self.not_found()
 
-        store.count_view(self.server.db, path)
+        etag = page_etag(row)
 
-        # No modules. The reference renderer is a Level 0 consumer, so
-        # every non-core tag falls back to its children - which is what a
-        # page looks like on a site that has never heard of it, and the
-        # honest default for a registry discovered from use.
-        body = render.render(json.loads(row["content"]))
+        # Counted before the 304 check: a reader who was told their copy is
+        # still good has read the page. Affordable now that the counter is
+        # on a connection that does not fsync - see store.connect_for_counters.
+        store.count_view(self.server.counter_db, path)
 
-        self.reply(200, render.document(
-            row["title"], body,
-            row["author_name"], row["author_url"],
-            time.strftime("%d %B %Y", time.gmtime(row["created"])),
-        ))
+        if self.headers.get("If-None-Match") == etag:
+            return self.not_modified(etag)
+
+        self.reply(200, document_for(row), etag=etag)
+
+
+# ------------------------------------------------------------- rendering
+#
+# A page is a value: it cannot change without its revision changing. That
+# is what docs/roadmap.md means by "a page can be cached until it is
+# edited", and it makes both of these correct by construction rather than
+# by invalidation logic anybody has to remember to write.
+
+DOCUMENTS = {}
+
+# Small on purpose. This runs on a laptop with little memory, and a miss
+# costs one render and nothing else - so the eviction can afford to be
+# crude. Clearing wholesale beats keeping an LRU honest across threads.
+DOCUMENT_LIMIT = 256
+
+
+def page_etag(row):
+    """
+    The validator for a published page.
+
+    Keyed on the revision rather than the digest. A digest covers content
+    only, so a title-only edit leaves it unchanged - and every reader
+    holding a cached copy would keep the old title indefinitely. The
+    revision moves on every edit, including that one.
+    """
+
+    return f'"{row["revision"]}-{row["digest"][-12:]}"'
+
+
+def document_for(row):
+    """The whole page, rendered once per revision."""
+
+    key = (row["path"], row["revision"])
+    cached = DOCUMENTS.get(key)
+
+    if cached is not None:
+        return cached
+
+    # No modules. The reference renderer is a Level 0 consumer, so every
+    # non-core tag falls back to its children - which is what a page looks
+    # like on a site that has never heard of it, and the honest default for
+    # a registry discovered from use.
+    body = render.render(json.loads(row["content"]))
+
+    html = render.document(
+        row["title"], body,
+        row["author_name"], row["author_url"],
+        time.strftime("%d %B %Y", time.gmtime(row["created"])),
+    )
+
+    if len(DOCUMENTS) >= DOCUMENT_LIMIT:
+        DOCUMENTS.clear()
+
+    DOCUMENTS[key] = html
+
+    return html
 
 
 # ------------------------------------------------------------------ notify
@@ -340,9 +414,10 @@ def first_run(db, instance):
 # -------------------------------------------------------------------- run
 
 
-def listener(instance, db, role, host, port):
+def listener(instance, db, role, host, port, counter_db=None):
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.db = db
+    httpd.counter_db = counter_db or db
     httpd.role = role
     httpd.instance = instance
 
@@ -352,9 +427,13 @@ def listener(instance, db, role, host, port):
 def serve(instance):
     db = store.connect(instance.database)
 
+    # Views are counted on their own connection so that the one write on
+    # the read path does not fsync. See store.connect_for_counters.
+    counters = store.connect_for_counters(instance.database)
+
     editor = listener(instance, db, "editor", instance.host, instance.port)
     pages = listener(instance, db, "pages", instance.pages_host,
-                     instance.pages_port)
+                     instance.pages_port, counter_db=counters)
 
     print(f"{instance.name}  ·  mode: {instance.mode}")
     print(f"  editor  {instance.editor_url}")
