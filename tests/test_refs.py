@@ -165,3 +165,63 @@ def test_a_page_named_like_a_method_is_not_shadowed(live):
 
     assert "createPage" in api.METHODS
     assert fetch(f"http://127.0.0.1:{PORT}/createPage")[0] == 404
+
+
+# --------------------------------------------------------------- lenses
+
+
+def test_each_lens_is_served_with_its_own_type(live):
+    page = f"http://127.0.0.1:{PORT}/{live['path']}"
+
+    assert fetch(page)[1]["Content-Type"].startswith("text/html")
+    assert fetch(page + "?lens=tree")[1]["Content-Type"].startswith("text/html")
+    assert fetch(page + "?lens=json")[1]["Content-Type"].startswith(
+        "application/json")
+
+
+def test_an_unknown_lens_is_refused(live):
+    assert fetch(f"http://127.0.0.1:{PORT}/{live['path']}?lens=xml")[0] == 404
+
+
+def test_a_lens_etag_does_not_validate_a_different_lens(live):
+    """
+    Two lenses of one revision are different documents. Without the lens in
+    the validator, a client switching lens while holding an old ETag would
+    be told nothing had changed and shown the wrong one.
+    """
+
+    page = f"http://127.0.0.1:{PORT}/{live['path']}"
+    etag = fetch(page + "?lens=tree")[1]["ETag"]
+
+    assert fetch(page + "?lens=tree", {"If-None-Match": etag})[0] == 304
+    assert fetch(page, {"If-None-Match": etag})[0] == 200
+    assert fetch(page + "?lens=json", {"If-None-Match": etag})[0] == 200
+
+
+def test_the_tree_lens_carries_no_script(live):
+    """
+    Published pages run under default-src 'none'. A lens that needed
+    JavaScript could not live on this origin at all.
+    """
+
+    body = fetch(f"http://127.0.0.1:{PORT}/{live['path']}?lens=tree")[2]
+
+    assert b"<script" not in body
+    assert b"onclick" not in body
+
+
+def test_the_tree_lens_shows_ids_and_the_fallback_rule(live):
+    body = fetch(
+        f"http://127.0.0.1:{PORT}/{live['path']}?lens=tree")[2].decode()
+
+    assert "#intro" in body
+    assert "no id" in body          # the untagged sibling
+    assert "falls back on" in body  # the summary line
+
+
+def test_the_json_lens_is_the_node_list(live):
+    body = fetch(f"http://127.0.0.1:{PORT}/{live['path']}?lens=json")[2]
+    nodes = json.loads(body)
+
+    assert isinstance(nodes, list)
+    assert nodes[0]["attrs"]["id"] == "intro"

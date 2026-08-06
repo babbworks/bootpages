@@ -247,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
         if not path or path in api.METHODS:
             return self.not_found()
 
-        return self.serve_page(path)
+        return self.serve_page(path, query)
 
     def serve_public_page_json(self, path, query):
         """
@@ -323,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
 
         self.reply(200, body, kind)
 
-    def serve_page(self, path):
+    def serve_page(self, path, query=None):
         try:
             row = store.page(self.server.db, path)
 
@@ -333,7 +333,12 @@ class Handler(BaseHTTPRequestHandler):
         if row["hidden"]:
             return self.not_found()
 
-        etag = page_etag(row)
+        lens = (query or {}).get("lens", "")
+
+        if lens not in ("", "tree", "json"):
+            return self.not_found()
+
+        etag = page_etag(row, lens)
 
         # Counted before the 304 check: a reader who was told their copy is
         # still good has read the page. Affordable now that the counter is
@@ -343,7 +348,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("If-None-Match") == etag:
             return self.not_modified(etag)
 
-        self.reply(200, document_for(row), etag=etag)
+        kind = ("application/json; charset=utf-8" if lens == "json"
+                else "text/html; charset=utf-8")
+
+        self.reply(200, document_for(row, lens), kind, etag=etag)
 
 
 # ------------------------------------------------------------- rendering
@@ -361,7 +369,7 @@ DOCUMENTS = {}
 DOCUMENT_LIMIT = 256
 
 
-def page_etag(row):
+def page_etag(row, lens=""):
     """
     The validator for a published page.
 
@@ -371,29 +379,34 @@ def page_etag(row):
     revision moves on every edit, including that one.
     """
 
-    return f'"{row["revision"]}-{row["digest"][-12:]}"'
+    # The lens is part of the validator. Two lenses of one revision are
+    # different documents, and a client that switched lens while holding an
+    # old ETag would otherwise be told nothing had changed.
+    mark = f"-{lens}" if lens else ""
+
+    return f'"{row["revision"]}{mark}-{row["digest"][-12:]}"'
 
 
-def document_for(row):
-    """The whole page, rendered once per revision."""
+def document_for(row, lens=""):
+    """The whole page in one lens, rendered once per revision."""
 
-    key = (row["path"], row["revision"])
+    key = (row["path"], row["revision"], lens)
     cached = DOCUMENTS.get(key)
 
     if cached is not None:
         return cached
 
-    # No modules. The reference renderer is a Level 0 consumer, so every
-    # non-core tag falls back to its children - which is what a page looks
-    # like on a site that has never heard of it, and the honest default for
-    # a registry discovered from use.
-    body = render.render(json.loads(row["content"]))
+    nodes = json.loads(row["content"])
 
-    html = render.document(
-        row["title"], body,
-        row["author_name"], row["author_url"],
-        time.strftime("%d %B %Y", time.gmtime(row["created"])),
-    )
+    if lens == "json":
+        html = json.dumps(nodes, indent=2, ensure_ascii=False)
+
+    elif lens == "tree":
+        html = render.tree_document(
+            row["title"], nodes, row["path"], row["digest"], row["revision"])
+
+    else:
+        html = _html_lens(row, nodes)
 
     if len(DOCUMENTS) >= DOCUMENT_LIMIT:
         DOCUMENTS.clear()
@@ -401,6 +414,20 @@ def document_for(row):
     DOCUMENTS[key] = html
 
     return html
+
+
+def _html_lens(row, nodes):
+    # No modules. The reference renderer is a Level 0 consumer, so every
+    # non-core tag falls back to its children - which is what a page looks
+    # like on a site that has never heard of it, and the honest default for
+    # a registry discovered from use.
+    body = render.render(nodes)
+
+    return render.document(
+        row["title"], body,
+        row["author_name"], row["author_url"],
+        time.strftime("%d %B %Y", time.gmtime(row["created"])),
+    )
 
 
 # ------------------------------------------------------------------ notify
