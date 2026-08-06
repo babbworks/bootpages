@@ -189,8 +189,37 @@ def _edit_page(db, params, instance):
 
 def _get_page(db, params, instance):
     row = store.page(db, params.get("path", ""))
+    ref = params.get("ref")
 
-    return page_json(row, instance, content=params.get("return_content") == "true")
+    if not ref:
+        return page_json(row, instance,
+                         content=params.get("return_content") == "true")
+
+    # One block of the page, with a fingerprint of its own.
+    #
+    # `digest` keeps meaning what it always meant - the whole page - and
+    # `ref_digest` is the branch. Overloading the existing field would
+    # silently change what an old client thought it was comparing.
+    try:
+        nodes = fmt.subtree(json.loads(row["content"]), ref)
+
+    except fmt.FormatError:
+        raise ApiError("REF_NOT_FOUND")
+
+    # Only what the subtree itself determines.
+    #
+    # Page-level fields are deliberately absent. `views` changes on every
+    # read and `revision` on every edit anywhere, so including either would
+    # make the body drift under an ETag that cannot see it - and the whole
+    # point of this route is that the response is unchanged exactly when
+    # the block is. A subscriber wanting page facts asks for the page.
+    return {
+        "path": row["path"],
+        "ref": ref,
+        "ref_url": f"{instance.pages_url}/{row['path']}#{ref}",
+        "ref_digest": fmt.digest(nodes),
+        "content": nodes,
+    }
 
 
 def _get_page_list(db, params, instance):

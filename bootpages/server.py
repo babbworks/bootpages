@@ -71,6 +71,11 @@ PAGE_CSP = (
     "form-action 'none'"
 )
 
+# Read-only, tokenless data that is already public to anything that can
+# fetch it. CORS only lets a browser script read what curl could already
+# get: it grants no new access, it removes an obstacle to consumers.
+CORS = (("Access-Control-Allow-Origin", "*"),)
+
 # The editor is the opposite case. It must never be framed, because a
 # clickjacked token field is a real attack against a credential that cannot
 # be revoked by anyone but its holder.
@@ -99,12 +104,19 @@ class Handler(BaseHTTPRequestHandler):
     def instance(self):
         return self.server.instance
 
-    def reply(self, status, body, kind="text/html; charset=utf-8"):
+    def reply(self, status, body, kind="text/html; charset=utf-8", etag=None,
+              extra=None):
         payload = body.encode("utf-8") if isinstance(body, str) else body
 
         self.send_response(status)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(payload)))
+
+        if etag:
+            self.send_header("ETag", etag)
+
+        for name, value in extra or ():
+            self.send_header(name, value)
         # Every reply carries the same headers; only the body is withheld
         # on HEAD. A consumer checking whether a page still exists should
         # get the same answer either way.
@@ -123,9 +135,25 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(payload)
 
-    def reply_json(self, payload, status=200):
+    def reply_json(self, payload, status=200, etag=None, extra=None):
         self.reply(status, json.dumps(payload, ensure_ascii=False),
-                   "application/json; charset=utf-8")
+                   "application/json; charset=utf-8", etag=etag, extra=extra)
+
+    def not_modified(self, etag):
+        """
+        304: what identifies the page, and no body at all.
+
+        The cheapest possible answer - no render, no bytes on the wire.
+        On a home uplink that matters more than anything the CPU does.
+        """
+
+        self.send_response(304)
+        self.send_header("ETag", etag)
+
+        for name, value in COMMON_HEADERS:
+            self.send_header(name, value)
+
+        self.end_headers()
 
     def not_found(self):
         self.reply(404, "<h1>404</h1><p>No page at that address.</p>")
@@ -174,7 +202,7 @@ class Handler(BaseHTTPRequestHandler):
         query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
         if self.role == "pages":
-            return self.get_pages(path)
+            return self.get_pages(path, query)
 
         return self.get_editor(path, query)
 
@@ -198,16 +226,73 @@ class Handler(BaseHTTPRequestHandler):
         # origin that holds tokens.
         return self.not_found()
 
-    def get_pages(self, path):
+    def get_pages(self, path, query=None):
         # The stylesheet is the one asset this origin serves, because a
         # page needs it and inlining would mean loosening style-src.
         if path == "static/page.css":
             return self.serve_static("page.css")
 
-        if not path or path in api.METHODS or path.startswith("getPage/"):
+        # Public read data on the untrusted-content origin, deliberately.
+        #
+        # This used to 404, which was right when this origin served only
+        # rendered documents. It is reversed for the same reason the two
+        # origins exist at all: a third-party consumer should never have a
+        # reason to address the origin where author tokens live.
+        if path.startswith("getPage/"):
+            return self.serve_public_page_json(
+                path[len("getPage/"):], query or {})
+
+        # Namespace protection stays. A page whose path collides with a
+        # method name is not shadowed by one.
+        if not path or path in api.METHODS:
             return self.not_found()
 
-        return self.serve_page(path)
+        return self.serve_page(path, query)
+
+    def serve_public_page_json(self, path, query):
+        """
+        getPage, tokenless, with CORS and an ETag scoped to what was asked
+        for.
+
+        With `ref`, the ETag covers that branch alone - so an agent
+        watching one block gets 304 and no bytes when the rest of the page
+        changes around it. That is the whole of the subscription
+        mechanism: conditional GET, no per-subscriber state, nothing owed.
+        """
+
+        query = dict(query)
+        query["path"] = path
+
+        try:
+            result = api.call(self.server.db, "getPage", query, self.instance)
+
+        except api.ApiError as problem:
+            return self.reply_json(
+                {"ok": False, "error": str(problem)}, 404, extra=CORS)
+
+        # A whole-page response needs the revision as well as the digest,
+        # because the digest covers content only and a title-only edit
+        # would otherwise go unnoticed.
+        #
+        # A subtree response must NOT include it. The revision increments
+        # on every edit anywhere on the page, so mixing it in would wake a
+        # watcher for changes it explicitly asked not to hear about - which
+        # is the entire feature, defeated by one extra term.
+        if "ref_digest" in result:
+            etag = f'"{result["ref_digest"][-12:]}"'
+        else:
+            etag = f'"{result["revision"]}-{result["digest"][-12:]}"'
+
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+
+            for name, value in CORS + COMMON_HEADERS:
+                self.send_header(name, value)
+
+            return self.end_headers()
+
+        self.reply_json({"ok": True, "result": result}, etag=etag, extra=CORS)
 
     # ------------------------------------------------------------ serving
 
@@ -238,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
 
         self.reply(200, body, kind)
 
-    def serve_page(self, path):
+    def serve_page(self, path, query=None):
         try:
             row = store.page(self.server.db, path)
 
@@ -248,19 +333,101 @@ class Handler(BaseHTTPRequestHandler):
         if row["hidden"]:
             return self.not_found()
 
-        store.count_view(self.server.db, path)
+        lens = (query or {}).get("lens", "")
 
-        # No modules. The reference renderer is a Level 0 consumer, so
-        # every non-core tag falls back to its children - which is what a
-        # page looks like on a site that has never heard of it, and the
-        # honest default for a registry discovered from use.
-        body = render.render(json.loads(row["content"]))
+        if lens not in ("", "tree", "json"):
+            return self.not_found()
 
-        self.reply(200, render.document(
-            row["title"], body,
-            row["author_name"], row["author_url"],
-            time.strftime("%d %B %Y", time.gmtime(row["created"])),
-        ))
+        etag = page_etag(row, lens)
+
+        # Counted before the 304 check: a reader who was told their copy is
+        # still good has read the page. Affordable now that the counter is
+        # on a connection that does not fsync - see store.connect_for_counters.
+        store.count_view(self.server.counter_db, path)
+
+        if self.headers.get("If-None-Match") == etag:
+            return self.not_modified(etag)
+
+        kind = ("application/json; charset=utf-8" if lens == "json"
+                else "text/html; charset=utf-8")
+
+        self.reply(200, document_for(row, lens), kind, etag=etag)
+
+
+# ------------------------------------------------------------- rendering
+#
+# A page is a value: it cannot change without its revision changing. That
+# is what docs/roadmap.md means by "a page can be cached until it is
+# edited", and it makes both of these correct by construction rather than
+# by invalidation logic anybody has to remember to write.
+
+DOCUMENTS = {}
+
+# Small on purpose. This runs on a laptop with little memory, and a miss
+# costs one render and nothing else - so the eviction can afford to be
+# crude. Clearing wholesale beats keeping an LRU honest across threads.
+DOCUMENT_LIMIT = 256
+
+
+def page_etag(row, lens=""):
+    """
+    The validator for a published page.
+
+    Keyed on the revision rather than the digest. A digest covers content
+    only, so a title-only edit leaves it unchanged - and every reader
+    holding a cached copy would keep the old title indefinitely. The
+    revision moves on every edit, including that one.
+    """
+
+    # The lens is part of the validator. Two lenses of one revision are
+    # different documents, and a client that switched lens while holding an
+    # old ETag would otherwise be told nothing had changed.
+    mark = f"-{lens}" if lens else ""
+
+    return f'"{row["revision"]}{mark}-{row["digest"][-12:]}"'
+
+
+def document_for(row, lens=""):
+    """The whole page in one lens, rendered once per revision."""
+
+    key = (row["path"], row["revision"], lens)
+    cached = DOCUMENTS.get(key)
+
+    if cached is not None:
+        return cached
+
+    nodes = json.loads(row["content"])
+
+    if lens == "json":
+        html = json.dumps(nodes, indent=2, ensure_ascii=False)
+
+    elif lens == "tree":
+        html = render.tree_document(
+            row["title"], nodes, row["path"], row["digest"], row["revision"])
+
+    else:
+        html = _html_lens(row, nodes)
+
+    if len(DOCUMENTS) >= DOCUMENT_LIMIT:
+        DOCUMENTS.clear()
+
+    DOCUMENTS[key] = html
+
+    return html
+
+
+def _html_lens(row, nodes):
+    # No modules. The reference renderer is a Level 0 consumer, so every
+    # non-core tag falls back to its children - which is what a page looks
+    # like on a site that has never heard of it, and the honest default for
+    # a registry discovered from use.
+    body = render.render(nodes)
+
+    return render.document(
+        row["title"], body,
+        row["author_name"], row["author_url"],
+        time.strftime("%d %B %Y", time.gmtime(row["created"])),
+    )
 
 
 # ------------------------------------------------------------------ notify
@@ -340,9 +507,10 @@ def first_run(db, instance):
 # -------------------------------------------------------------------- run
 
 
-def listener(instance, db, role, host, port):
+def listener(instance, db, role, host, port, counter_db=None):
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.db = db
+    httpd.counter_db = counter_db or db
     httpd.role = role
     httpd.instance = instance
 
@@ -352,9 +520,13 @@ def listener(instance, db, role, host, port):
 def serve(instance):
     db = store.connect(instance.database)
 
+    # Views are counted on their own connection so that the one write on
+    # the read path does not fsync. See store.connect_for_counters.
+    counters = store.connect_for_counters(instance.database)
+
     editor = listener(instance, db, "editor", instance.host, instance.port)
     pages = listener(instance, db, "pages", instance.pages_host,
-                     instance.pages_port)
+                     instance.pages_port, counter_db=counters)
 
     print(f"{instance.name}  ·  mode: {instance.mode}")
     print(f"  editor  {instance.editor_url}")
@@ -386,6 +558,13 @@ def main():
     parser.add_argument("--port", type=int)
     parser.add_argument("--pages-host")
     parser.add_argument("--pages-port", type=int)
+    parser.add_argument(
+        "--pages-url",
+        help="the public address of published pages, e.g. "
+             "https://page.example. Required behind a reverse proxy: the "
+             "API reports this URL to clients, and a process serving "
+             "loopback HTTP cannot work out the name the world uses.",
+    )
     parser.add_argument("--db")
     parser.add_argument("--name")
     parser.add_argument("--description")
@@ -408,6 +587,7 @@ def main():
             name=args.name, description=args.description, mode=args.mode,
             contact=args.contact, host=args.host, port=args.port,
             pages_host=args.pages_host, pages_port=args.pages_port,
+            pages_url=args.pages_url,
             database=args.db, allow_public=args.allow_public,
         )
 

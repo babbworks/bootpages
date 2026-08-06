@@ -141,3 +141,113 @@ def document(title, body, author_name="", author_url="", date=""):
         date=f" &middot; {escape(date)}" if date else "",
         body=body,
     )
+
+
+# ----------------------------------------------------------------- lenses
+#
+# docs/format.md calls these lenses: projections of one canonical node
+# list, never dialects with their own semantics. So the tree below adds no
+# expressive power - it shows the same page a reader gets, with the
+# structure that was always there made visible.
+#
+# It emits no script, deliberately. Published pages are served under
+# `default-src 'none'`, and an inspector that needed JavaScript could not
+# live on that origin at all. Everything here is static markup and a
+# stylesheet, so pulling back the curtain costs the page nothing.
+
+
+def _attr_rows(attrs):
+    """Attributes grouped by family, because the family says what is owed."""
+
+    if not attrs:
+        return ""
+
+    rows = ""
+
+    for name in sorted(attrs):
+        kind = fmt.family(name)
+        rows += (
+            f'<div class="attr {kind}">'
+            f'<span class="family">{escape(kind)}</span>'
+            f'<code class="name">{escape(name)}</code>'
+            f'<span class="value">{escape(attrs[name])}</span>'
+            f'</div>'
+        )
+
+    return f'<div class="attrs">{rows}</div>'
+
+
+def tree(nodes, modules=frozenset()):
+    """The node list as nested HTML, showing what a consumer would do."""
+
+    items = ""
+
+    for node in fmt.normalise(nodes):
+        if isinstance(node, str):
+            items += f'<li class="text">{escape(node)}</li>'
+            continue
+
+        tag = node["tag"]
+        attrs = node["attrs"]
+        known = tag in fmt.CORE_TAGS or tag in modules
+
+        # The one law, made visible: an unknown tag renders its children,
+        # so a reader can see exactly which parts of this page a Level 0
+        # consumer is showing as fallback.
+        state = "known" if known else "fallback"
+        note = "" if known else '<span class="note">falls back to children</span>'
+
+        identifier = attrs.get("id")
+        anchor = (f'<a class="id" id="{escape(identifier, quote=True)}" '
+                  f'href="#{escape(identifier, quote=True)}">#{escape(identifier)}</a>'
+                  if identifier else '<span class="anon">no id</span>')
+
+        items += (
+            f'<li class="node {state}">'
+            f'<div class="head"><code class="tag">{escape(tag)}</code>'
+            f'{anchor}{note}</div>'
+            f'{_attr_rows(attrs)}'
+            f'{tree(node["children"], modules) if node["children"] else ""}'
+            f'</li>'
+        )
+
+    return f'<ol class="tree">{items}</ol>' if items else ""
+
+
+TREE_PAGE = """<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} &mdash; structure</title>
+<link rel="stylesheet" href="/static/page.css">
+<article class="lens">
+<h1>{title}</h1>
+<p class="lensnote">The structure of this page. <a href="{path}">Read it
+instead</a>, or take the <a href="{path}?lens=json">JSON</a>.</p>
+<dl class="facts">
+<dt>digest</dt><dd><code>{digest}</code></dd>
+<dt>revision</dt><dd>{revision}</dd>
+<dt>tags</dt><dd>{tags}</dd>
+<dt>falls back on</dt><dd>{fallbacks}</dd>
+</dl>
+{body}
+</article>
+"""
+
+
+def tree_document(title, nodes, path, digest, revision, modules=frozenset()):
+    """The tree lens, whole."""
+
+    used = sorted(fmt.tags_used(nodes))
+    missing = sorted(fmt.unsupported(nodes, set(fmt.CORE_TAGS) | set(modules)))
+
+    return TREE_PAGE.format(
+        title=escape(title or "Untitled"),
+        path=escape(f"/{path}", quote=True),
+        digest=escape(digest),
+        revision=revision,
+        tags=escape(", ".join(used)) or "none",
+        # Nothing here is a failure. Falling back is the normal path for a
+        # Level 0 consumer, which this renderer deliberately is.
+        fallbacks=escape(", ".join(missing)) or "nothing",
+        body=tree(nodes, modules),
+    )

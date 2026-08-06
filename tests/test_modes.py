@@ -176,7 +176,105 @@ def test_pages_url_is_its_own_origin():
     assert instance.editor_url.endswith(":8080")
 
 
+def test_pages_url_can_be_given_outright(monkeypatch):
+    """
+    Behind a reverse proxy the public address is not one this process can
+    work out: it serves loopback HTTP and the world sees HTTPS on a name
+    nothing here has been told. api.py reports this URL to clients, so
+    getting it wrong hands out links to 127.0.0.1.
+    """
+
+    monkeypatch.delenv("BOOTPAGES_PAGES_URL", raising=False)
+
+    instance = Instance(pages_url="https://pages.babb.tel")
+
+    assert instance.pages_url == "https://pages.babb.tel"
+    assert instance.describe()["pages_url"] == "https://pages.babb.tel"
+
+
+def test_an_explicit_pages_url_beats_the_environment(monkeypatch):
+    monkeypatch.setenv("BOOTPAGES_PAGES_URL", "https://from-the-environment")
+
+    assert Instance().pages_url == "https://from-the-environment"
+    assert Instance(pages_url="https://argued").pages_url == "https://argued"
+
+
+def test_a_trailing_slash_is_not_carried_into_page_urls(monkeypatch):
+    """
+    api.py builds f"{pages_url}/{path}". A trailing slash there produces a
+    double slash in every published link, which is the kind of thing nobody
+    notices until it is in someone else's database.
+    """
+
+    monkeypatch.delenv("BOOTPAGES_PAGES_URL", raising=False)
+
+    assert Instance(pages_url="https://pages.babb.tel/").pages_url == (
+        "https://pages.babb.tel")
+
+
 def test_describe_carries_no_secret():
     described = Instance().describe()
 
     assert set(described) == {"name", "description", "mode", "contact", "pages_url"}
+
+
+# ------------------------------------------------------------ node ids
+
+
+def test_publishing_a_page_with_duplicate_ids_is_refused(db):
+    """
+    Enforced in the store, on write. A subscription pointing at two nodes
+    is ambiguous, and the failure would be silent.
+    """
+
+    from bootpages import format as fmt
+
+    account = store.create_account(db, "author", mode="open")
+    nodes = [
+        {"tag": "p", "attrs": {"id": "sales"}, "children": ["first"]},
+        {"tag": "p", "attrs": {"id": "sales"}, "children": ["second"]},
+    ]
+
+    with pytest.raises(fmt.FormatError, match="duplicate id"):
+        store.create_page(db, account["token"], "Doubled", nodes)
+
+
+def test_editing_a_page_into_duplicate_ids_is_refused(db):
+    from bootpages import format as fmt
+
+    account = store.create_account(db, "author", mode="open")
+    page = store.create_page(db, account["token"], "Fine", [
+        {"tag": "p", "attrs": {"id": "one"}, "children": ["a"]},
+    ])
+
+    with pytest.raises(fmt.FormatError, match="duplicate id"):
+        store.edit_page(db, account["token"], page["path"], "Fine", [
+            {"tag": "p", "attrs": {"id": "dup"}, "children": ["a"]},
+            {"tag": "p", "attrs": {"id": "dup"}, "children": ["b"]},
+        ])
+
+
+def test_unique_ids_publish_normally(db):
+    account = store.create_account(db, "author", mode="open")
+    page = store.create_page(db, account["token"], "Good", [
+        {"tag": "p", "attrs": {"id": "intro"}, "children": ["a"]},
+        {"tag": "p", "attrs": {"id": "body"}, "children": ["b"]},
+    ])
+
+    assert page["revision"] == 1
+
+
+def test_existing_pages_with_duplicates_still_render(db):
+    """
+    The check is on write only. render.py calls normalise on every read,
+    and a rule made today must not make yesterday's page unservable.
+    """
+
+    from bootpages import render
+
+    html = render.render([
+        {"tag": "p", "attrs": {"id": "same"}, "children": ["first"]},
+        {"tag": "p", "attrs": {"id": "same"}, "children": ["second"]},
+    ])
+
+    assert "first" in html and "second" in html

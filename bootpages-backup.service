@@ -1,0 +1,62 @@
+# A verified copy of the store, on a schedule.
+#
+# Deploys already take one. This exists because the risk they cover is not
+# the risk that matters: editPage replaces a page wholesale with no undo,
+# and that accrues with authoring, not with deploying. On an instance that
+# is published to daily and deployed to monthly, a deploy-only backup is a
+# month stale on its worst day.
+
+[Unit]
+Description=Bootpages - verified backup of the store
+Documentation=https://github.com/babbworks/bootpages
+
+[Service]
+Type=oneshot
+
+User=bootpages
+Group=bootpages
+
+WorkingDirectory=/opt/bootpages
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=BOOTPAGES_BACKUP_DIR=/var/backups/bootpages
+Environment=BOOTPAGES_BACKUP_KEEP=30
+
+ExecStart=/usr/bin/python3 -m bootpages.backup \
+    --db /var/lib/bootpages/bootpages.db create
+
+# The store to read and the backups to write. ProtectSystem=strict makes
+# everything else read-only, so this list is the whole of what it can
+# change. Point BOOTPAGES_BACKUP_DIR at an external drive and its mount
+# must be added here too.
+StateDirectory=bootpages
+ReadWritePaths=/var/backups/bootpages
+
+# Same posture as the server. It holds no credential and needs no
+# privilege; the copy it writes contains tokens, which is why UMask is
+# tight and the directory is not world-readable.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+# It reads a file and writes a file. It has no business on a network.
+RestrictAddressFamilies=AF_UNIX
+
+MemoryMax=128M
+TasksMax=16

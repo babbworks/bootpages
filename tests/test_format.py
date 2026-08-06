@@ -204,3 +204,158 @@ def test_a_telegraph_page_needs_no_fallbacks():
             {"tag": "blockquote", "children": ["A quotation."]}]
 
     assert fmt.unsupported(page, fmt.CORE_TAGS) == set()
+
+
+# ------------------------------------------------------------------- ids
+
+
+def test_ids_are_collected_with_their_paths():
+    nodes = [
+        {"tag": "p", "attrs": {"id": "intro"}, "children": ["hello"]},
+        {"tag": "aside", "children": [
+            {"tag": "p", "attrs": {"id": "nested"}, "children": ["inner"]},
+        ]},
+    ]
+
+    assert fmt.check_ids(nodes) == {
+        "intro": "content[0]",
+        "nested": "content[1].children[0]",
+    }
+
+
+def test_a_page_with_no_ids_is_fine():
+    assert fmt.check_ids([{"tag": "p", "children": ["nothing to see"]}]) == {}
+
+
+def test_duplicate_ids_are_refused_and_both_places_named():
+    """
+    A broken ref fails visibly. An ambiguous subscription fails silently
+    and in the wrong direction, so this has to be caught on write.
+    """
+
+    nodes = [
+        {"tag": "p", "attrs": {"id": "sales"}, "children": ["first"]},
+        {"tag": "p", "attrs": {"id": "sales"}, "children": ["second"]},
+    ]
+
+    with pytest.raises(fmt.FormatError) as caught:
+        fmt.check_ids(nodes)
+
+    message = str(caught.value)
+    assert "sales" in message
+    assert "content[0]" in message and "content[1]" in message
+
+
+def test_a_duplicate_nested_deeper_is_still_caught():
+    nodes = [
+        {"tag": "p", "attrs": {"id": "x"}, "children": ["top"]},
+        {"tag": "aside", "children": [
+            {"tag": "blockquote", "children": [
+                {"tag": "p", "attrs": {"id": "x"}, "children": ["buried"]},
+            ]},
+        ]},
+    ]
+
+    with pytest.raises(fmt.FormatError, match="x"):
+        fmt.check_ids(nodes)
+
+
+@pytest.mark.parametrize("value", ["has space", "slash/es", "hash#es",
+                                   "question?", "", "a" * 65, "per%cent"])
+def test_ids_outside_the_permitted_charset_are_refused(value):
+    """
+    An id has to survive being a URL fragment and a query parameter.
+    Rejecting at write beats escaping at every read.
+    """
+
+    with pytest.raises(fmt.FormatError):
+        fmt.check_ids([{"tag": "p", "attrs": {"id": value}, "children": []}])
+
+
+@pytest.mark.parametrize("value", ["sales", "Q3", "a-b_c", "x", "9", "a" * 64])
+def test_ids_that_are_url_safe_are_accepted(value):
+    assert fmt.check_ids(
+        [{"tag": "p", "attrs": {"id": value}, "children": []}]) == {
+            value: "content[0]"}
+
+
+def test_checking_ids_does_not_require_normalised_input():
+    """
+    Called on the write path, before normalise has filled anything in.
+    """
+
+    assert fmt.check_ids([{"tag": "p", "attrs": {"id": "raw"}}]) == {
+        "raw": "content[0]"}
+
+
+# --------------------------------------------------------------- subtree
+
+
+TREE = [
+    {"tag": "p", "attrs": {"id": "intro"}, "children": ["opening"]},
+    {"tag": "aside", "attrs": {}, "children": [
+        {"tag": "p", "attrs": {"id": "buried"}, "children": ["inner"]},
+    ]},
+    {"tag": "p", "attrs": {}, "children": ["anonymous"]},
+]
+
+
+def test_subtree_returns_a_node_list_not_a_node():
+    """
+    A node list, so it composes with digest(), render() and normalise()
+    without any of them needing to know it came from inside a page.
+    """
+
+    found = fmt.subtree(TREE, "intro")
+
+    assert isinstance(found, list) and len(found) == 1
+    assert found[0]["children"] == ["opening"]
+
+
+def test_subtree_finds_a_node_nested_anywhere():
+    assert fmt.subtree(TREE, "buried")[0]["children"] == ["inner"]
+
+
+def test_subtree_carries_the_whole_branch():
+    tree = [{"tag": "aside", "attrs": {"id": "wrap"}, "children": [
+        {"tag": "p", "attrs": {}, "children": ["kept"]},
+    ]}]
+
+    assert fmt.subtree(tree, "wrap")[0]["children"][0]["children"] == ["kept"]
+
+
+def test_an_unknown_ref_is_refused_rather_than_empty():
+    """
+    A subscription to something that no longer exists must be loud. An
+    empty result would look like a block that simply has no content.
+    """
+
+    with pytest.raises(fmt.FormatError, match="gone"):
+        fmt.subtree(TREE, "gone")
+
+
+def test_a_subtree_digest_is_just_the_digest_of_that_list():
+    """
+    The whole reason subscription needs no new machinery: a subtree is a
+    node list, and digest() already takes node lists.
+    """
+
+    found = fmt.subtree(TREE, "intro")
+
+    assert fmt.digest(found) == fmt.digest(
+        [{"tag": "p", "attrs": {"id": "intro"}, "children": ["opening"]}])
+
+
+def test_a_subtree_digest_ignores_changes_elsewhere_on_the_page():
+    """
+    The property that makes per-block subscription worth having.
+    """
+
+    before = fmt.digest(fmt.subtree(TREE, "intro"))
+
+    edited = [
+        TREE[0],
+        {"tag": "p", "attrs": {}, "children": ["completely different"]},
+    ]
+
+    assert fmt.digest(fmt.subtree(edited, "intro")) == before

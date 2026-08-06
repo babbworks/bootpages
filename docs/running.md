@@ -16,6 +16,7 @@ Editor at <http://127.0.0.1:8080>, store at `data/bootpages.db`.
 --host          default 127.0.0.1
 --port          default 8080          the editor and the API
 --pages-port    default 8081          published pages
+--pages-url     default derived       public address of published pages
 --mode          default admin         open | invited | admin
 --db            default data/bootpages.db
 --name --description --contact        what this instance calls itself
@@ -25,6 +26,14 @@ Editor at <http://127.0.0.1:8080>, store at `data/bootpages.db`.
 Every one of those also reads from the environment
 (`BOOTPAGES_MODE`, `BOOTPAGES_PORT`, …), which is how the service is
 configured.
+
+`--pages-url` is the one setting the server cannot work out for itself.
+Every API response reports where a published page lives, and behind a
+reverse proxy that is `https://` on a name this process has never been
+told, while it sees only loopback HTTP. Leave it unset on a public
+instance and the API publishes links to `127.0.0.1` while looking
+perfectly healthy. `install.sh` asks for it; set it there or in the
+drop-in.
 
 No dependencies. Standard library only — `http.server`, `sqlite3`,
 `hashlib`, `json`. There is nothing to install and nothing to activate.
@@ -56,16 +65,88 @@ library should not carry an empty virtualenv for the look of the thing.
 ```
 
 The database is the only thing on disk that matters. Backing this service
-up is copying one file; restoring it is copying the file back. For a store
-whose entire promise is that the bytes come back, that is worth more than
-any amount of operational cleverness.
+up is one file and restoring it is that file back — a shape worth more, for
+a store whose entire promise is that the bytes come back, than any amount
+of operational cleverness.
+
+One caveat, and it is not a small one: **that file cannot be copied with
+`cp` while the service is running.** The store runs in WAL mode, so a
+committed row lives in a `-wal` sidecar until a checkpoint, and a plain
+copy captures a torn database that looks fine until the day it is needed.
+`python3 -m bootpages.backup` exists for that reason. See Backups below.
 
 ### Updating
 
 ```sh
-sudo git -C /opt/bootpages pull
-sudo systemctl restart bootpages
+sudo /opt/bootpages/deploy.sh          # on the machine
+./deploy.sh user@powerbook             # from anywhere with ssh
 ```
+
+Tests run first, then a verified backup is taken, and only then does any
+code move.
+
+Deploying to a host runs the suite **twice**: here, then there. They are
+not the same suite. `tests/test_editor.py` skips without node, and node has
+no 32-bit PowerPC build — so on the PowerBook that test silently vanishes
+while everything still reports green. This machine covers the editor; the
+target covers the architecture.
+
+Needs `python3-pytest` on the machine being deployed to. That is a deploy
+dependency, not a runtime one — the service itself still imports nothing
+outside the standard library.
+
+It reinstalls the unit but never the drop-in. Mode and port changes stay
+with `install.sh`, which is the thing that was told what they are.
+
+Nothing falls back. If the tests fail, the backup fails, or the service
+does not answer afterwards, it stops and prints the command to roll back
+and the backup to roll back to.
+
+### Backups
+
+```sh
+systemctl list-timers bootpages-backup      # when it last ran, when it runs next
+python3 -m bootpages.backup list            # what exists
+python3 -m bootpages.backup verify PATH     # prove one is readable
+```
+
+Daily, plus one before every deploy. Thirty are kept. Each copy is verified
+against the source as it is written — a backup that has never been read is
+a hypothesis, and checking costs milliseconds.
+
+Taken with SQLite's online backup, not `cp`, for the WAL reason above.
+
+Restoring:
+
+```sh
+sudo systemctl stop bootpages
+sudo -u bootpages python3 -m bootpages.backup restore /var/backups/bootpages/bootpages-....db
+sudo systemctl start bootpages
+```
+
+It refuses while the service is running, and moves the database it replaces
+aside rather than overwriting it.
+
+**An external drive.** Set the destination and require it to be mounted:
+
+```
+BOOTPAGES_BACKUP_DIR=/mnt/bootpages-backups
+BOOTPAGES_BACKUP_REQUIRE_MOUNT=1
+```
+
+in a drop-in at `/etc/systemd/system/bootpages-backup.service.d/`, and in
+the environment deploy.sh runs with. Add the mount to `ReadWritePaths=` in
+the same drop-in, or the sandbox will refuse the write.
+
+With the drive absent, a backup **fails** rather than falling back to the
+internal disk. A path under a mountpoint exists whether or not anything is
+mounted on it, so falling back is how you come to believe you have months
+of external backups that were never written.
+
+**Still missing: a copy that is not in this room.** Both tiers live on one
+machine behind one power supply. They survive a bad edit and a dead disk;
+they do not survive the building. See
+`docs/superpowers/specs/2026-08-05-deploy-and-backup-design.md`.
 
 ---
 

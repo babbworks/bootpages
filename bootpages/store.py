@@ -77,6 +77,31 @@ class StoreError(Exception):
     """Something the caller did wrong. The message is safe to return."""
 
 
+def connect_for_counters(path="data/bootpages.db"):
+    """
+    A second connection, for the one write whose loss costs nothing.
+
+    Every page view increments a counter, and under `synchronous=FULL`
+    that means a physical fsync on the read path - measured at 9ms on an
+    SSD and a full platter rotation on the spinning disk this is meant to
+    run on. It was sixteen times the cost of the entire read.
+
+    `NORMAL` in WAL mode does not fsync on each commit, which makes the
+    same write 0.027ms. That is not the corruption risk it sounds like:
+    WAL plus NORMAL cannot corrupt the database, it can only lose the last
+    few commits to a power cut. Losing three view counts is nothing.
+
+    Pages keep FULL, on the other connection. A page acknowledged and then
+    lost is a broken promise; a counter is not.
+    """
+
+    db = connect(path)
+
+    db.execute("PRAGMA synchronous=NORMAL")
+
+    return db
+
+
 def connect(path="data/bootpages.db"):
     directory = os.path.dirname(path)
 
@@ -296,6 +321,11 @@ def free_path(db, title):
 
 def create_page(db, token, title, content, author_name="", author_url=""):
     holder = account(db, token)
+
+    # Before anything is stored. An id addresses one node, and a ref or a
+    # subscription pointing at two of them is ambiguous - see check_ids.
+    fmt.check_ids(content)
+
     canonical = fmt.canonical(content)
 
     path = free_path(db, title)
@@ -328,6 +358,8 @@ def edit_page(db, token, path, title, content, author_name="", author_url=""):
     if existing["token"] != token:
         account(db, token)          # raise ACCESS_TOKEN_INVALID if bogus
         raise StoreError("PAGE_ACCESS_DENIED")
+
+    fmt.check_ids(content)
 
     canonical = fmt.canonical(content)
 

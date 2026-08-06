@@ -1,0 +1,23 @@
+# Daily, and catching up if the machine was not awake for it.
+
+[Unit]
+Description=Bootpages - daily verified backup
+Documentation=https://github.com/babbworks/bootpages
+
+[Timer]
+OnCalendar=daily
+
+# LOAD-BEARING ON A LAPTOP.
+#
+# Without this, a backup scheduled while the lid is shut is not late - it
+# simply never happens, silently, and the first evidence is a gap in the
+# directory on the day you need one. Persistent=true runs it on the next
+# boot instead.
+Persistent=true
+
+# Nothing else runs at midnight on this machine, but a fixed time across a
+# fleet is how you build a thundering herd.
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

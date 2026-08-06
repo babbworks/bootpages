@@ -91,3 +91,45 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 2.5rem 0; }
   was chosen over a flatter one.
 */
 ul ul { margin: 0; }
+
+/* ------------------------------------------------------------- lenses
+ *
+ * The tree lens. No script anywhere - published pages are served under
+ * default-src 'none', so an inspector that needed JavaScript could not
+ * live on this origin at all. Everything below is static markup and this
+ * stylesheet.
+ */
+
+.lensnote { color: var(--faint); font-size: 0.9rem; }
+
+.facts { display: grid; grid-template-columns: max-content 1fr;
+         gap: 0.2rem 1rem; margin: 1.5rem 0; font-size: 0.9rem; }
+.facts dt { color: var(--faint); }
+.facts dd { margin: 0; }
+
+.tree, .tree ol { list-style: none; padding-left: 1rem; margin: 0; }
+.tree > li { border-left: 2px solid var(--line); padding: 0.35rem 0 0.35rem 0.75rem;
+             margin: 0.2rem 0; }
+
+/* Falling back is the normal path for a Level 0 consumer, not a failure,
+ * so it is marked rather than warned about. */
+.tree > li.fallback { border-left-color: var(--accent); }
+
+.head { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
+.tag { font-weight: 600; }
+.id { font-size: 0.85rem; }
+.anon { font-size: 0.85rem; color: var(--faint); }
+.note { font-size: 0.8rem; color: var(--accent); }
+
+.text { color: var(--faint); font-size: 0.9rem; padding: 0.15rem 0 0.15rem 0.75rem;
+        border-left: 2px dotted var(--line); margin: 0.15rem 0; }
+
+.attrs { margin: 0.3rem 0 0.1rem; font-size: 0.85rem; }
+.attr { display: flex; gap: 0.5rem; align-items: baseline; }
+.family { min-width: 5.5rem; color: var(--faint); font-size: 0.75rem;
+          text-transform: uppercase; letter-spacing: 0.03em; }
+.attr .value { color: var(--faint); }
+
+/* require- fails closed when a consumer cannot evaluate it, which is the
+ * one family with a safety consequence. Worth seeing at a glance. */
+.attr.require .name { color: var(--accent); }
