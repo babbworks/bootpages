@@ -133,3 +133,35 @@ ul ul { margin: 0; }
 /* require- fails closed when a consumer cannot evaluate it, which is the
  * one family with a safety consequence. Worth seeing at a glance. */
 .attr.require .name { color: var(--accent); }
+
+/* The lens bar.
+ *
+ * Fixed to the bottom so it is reachable without scrolling, and quiet
+ * enough that it does not compete with the document. No script: switching
+ * lens is navigation, and three links do it.
+ */
+
+.lensbar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  display: flex; gap: 0.25rem; justify-content: center;
+  padding: 0.4rem;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  font-size: 0.8rem;
+}
+
+.lensbar a, .lensbar .here {
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+.lensbar a { color: var(--faint); }
+.lensbar a:hover { color: var(--ink); background: var(--line); }
+
+/* Where you are, not a link. */
+.lensbar .here { color: var(--bg); background: var(--ink); }
+
+/* So the bar never covers the last line of a page. */
+article { padding-bottom: 3.5rem; }

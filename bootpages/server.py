@@ -427,6 +427,7 @@ def _html_lens(row, nodes):
         row["title"], body,
         row["author_name"], row["author_url"],
         time.strftime("%d %B %Y", time.gmtime(row["created"])),
+        row["path"],
     )
 
 
