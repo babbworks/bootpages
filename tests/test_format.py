@@ -204,3 +204,85 @@ def test_a_telegraph_page_needs_no_fallbacks():
             {"tag": "blockquote", "children": ["A quotation."]}]
 
     assert fmt.unsupported(page, fmt.CORE_TAGS) == set()
+
+
+# ------------------------------------------------------------------- ids
+
+
+def test_ids_are_collected_with_their_paths():
+    nodes = [
+        {"tag": "p", "attrs": {"id": "intro"}, "children": ["hello"]},
+        {"tag": "aside", "children": [
+            {"tag": "p", "attrs": {"id": "nested"}, "children": ["inner"]},
+        ]},
+    ]
+
+    assert fmt.check_ids(nodes) == {
+        "intro": "content[0]",
+        "nested": "content[1].children[0]",
+    }
+
+
+def test_a_page_with_no_ids_is_fine():
+    assert fmt.check_ids([{"tag": "p", "children": ["nothing to see"]}]) == {}
+
+
+def test_duplicate_ids_are_refused_and_both_places_named():
+    """
+    A broken ref fails visibly. An ambiguous subscription fails silently
+    and in the wrong direction, so this has to be caught on write.
+    """
+
+    nodes = [
+        {"tag": "p", "attrs": {"id": "sales"}, "children": ["first"]},
+        {"tag": "p", "attrs": {"id": "sales"}, "children": ["second"]},
+    ]
+
+    with pytest.raises(fmt.FormatError) as caught:
+        fmt.check_ids(nodes)
+
+    message = str(caught.value)
+    assert "sales" in message
+    assert "content[0]" in message and "content[1]" in message
+
+
+def test_a_duplicate_nested_deeper_is_still_caught():
+    nodes = [
+        {"tag": "p", "attrs": {"id": "x"}, "children": ["top"]},
+        {"tag": "aside", "children": [
+            {"tag": "blockquote", "children": [
+                {"tag": "p", "attrs": {"id": "x"}, "children": ["buried"]},
+            ]},
+        ]},
+    ]
+
+    with pytest.raises(fmt.FormatError, match="x"):
+        fmt.check_ids(nodes)
+
+
+@pytest.mark.parametrize("value", ["has space", "slash/es", "hash#es",
+                                   "question?", "", "a" * 65, "per%cent"])
+def test_ids_outside_the_permitted_charset_are_refused(value):
+    """
+    An id has to survive being a URL fragment and a query parameter.
+    Rejecting at write beats escaping at every read.
+    """
+
+    with pytest.raises(fmt.FormatError):
+        fmt.check_ids([{"tag": "p", "attrs": {"id": value}, "children": []}])
+
+
+@pytest.mark.parametrize("value", ["sales", "Q3", "a-b_c", "x", "9", "a" * 64])
+def test_ids_that_are_url_safe_are_accepted(value):
+    assert fmt.check_ids(
+        [{"tag": "p", "attrs": {"id": value}, "children": []}]) == {
+            value: "content[0]"}
+
+
+def test_checking_ids_does_not_require_normalised_input():
+    """
+    Called on the write path, before normalise has filled anything in.
+    """
+
+    assert fmt.check_ids([{"tag": "p", "attrs": {"id": "raw"}}]) == {
+        "raw": "content[0]"}

@@ -321,6 +321,11 @@ def free_path(db, title):
 
 def create_page(db, token, title, content, author_name="", author_url=""):
     holder = account(db, token)
+
+    # Before anything is stored. An id addresses one node, and a ref or a
+    # subscription pointing at two of them is ambiguous - see check_ids.
+    fmt.check_ids(content)
+
     canonical = fmt.canonical(content)
 
     path = free_path(db, title)
@@ -353,6 +358,8 @@ def edit_page(db, token, path, title, content, author_name="", author_url=""):
     if existing["token"] != token:
         account(db, token)          # raise ACCESS_TOKEN_INVALID if bogus
         raise StoreError("PAGE_ACCESS_DENIED")
+
+    fmt.check_ids(content)
 
     canonical = fmt.canonical(content)
 

@@ -216,3 +216,65 @@ def test_describe_carries_no_secret():
     described = Instance().describe()
 
     assert set(described) == {"name", "description", "mode", "contact", "pages_url"}
+
+
+# ------------------------------------------------------------ node ids
+
+
+def test_publishing_a_page_with_duplicate_ids_is_refused(db):
+    """
+    Enforced in the store, on write. A subscription pointing at two nodes
+    is ambiguous, and the failure would be silent.
+    """
+
+    from bootpages import format as fmt
+
+    account = store.create_account(db, "author", mode="open")
+    nodes = [
+        {"tag": "p", "attrs": {"id": "sales"}, "children": ["first"]},
+        {"tag": "p", "attrs": {"id": "sales"}, "children": ["second"]},
+    ]
+
+    with pytest.raises(fmt.FormatError, match="duplicate id"):
+        store.create_page(db, account["token"], "Doubled", nodes)
+
+
+def test_editing_a_page_into_duplicate_ids_is_refused(db):
+    from bootpages import format as fmt
+
+    account = store.create_account(db, "author", mode="open")
+    page = store.create_page(db, account["token"], "Fine", [
+        {"tag": "p", "attrs": {"id": "one"}, "children": ["a"]},
+    ])
+
+    with pytest.raises(fmt.FormatError, match="duplicate id"):
+        store.edit_page(db, account["token"], page["path"], "Fine", [
+            {"tag": "p", "attrs": {"id": "dup"}, "children": ["a"]},
+            {"tag": "p", "attrs": {"id": "dup"}, "children": ["b"]},
+        ])
+
+
+def test_unique_ids_publish_normally(db):
+    account = store.create_account(db, "author", mode="open")
+    page = store.create_page(db, account["token"], "Good", [
+        {"tag": "p", "attrs": {"id": "intro"}, "children": ["a"]},
+        {"tag": "p", "attrs": {"id": "body"}, "children": ["b"]},
+    ])
+
+    assert page["revision"] == 1
+
+
+def test_existing_pages_with_duplicates_still_render(db):
+    """
+    The check is on write only. render.py calls normalise on every read,
+    and a rule made today must not make yesterday's page unservable.
+    """
+
+    from bootpages import render
+
+    html = render.render([
+        {"tag": "p", "attrs": {"id": "same"}, "children": ["first"]},
+        {"tag": "p", "attrs": {"id": "same"}, "children": ["second"]},
+    ])
+
+    assert "first" in html and "second" in html

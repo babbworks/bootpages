@@ -11,6 +11,7 @@ docs/format.md, which this implements and which wins where they disagree.
 
 import hashlib
 import json
+import re
 
 # The canonicalisation recipe this module implements. It travels in every
 # digest so that a value computed today still means something precise in
@@ -129,6 +130,66 @@ def _node(node, path):
         "attrs": _attrs(node.get("attrs") or {}, path),
         "children": normalise(node.get("children") or [], f"{path}.children"),
     }
+
+
+# An id has to survive being a URL fragment and a query parameter, so the
+# permitted shape is decided at write time rather than escaped at every
+# read. 64 is generous for a name a person chose deliberately.
+ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def check_ids(nodes, path="content"):
+    """
+    Every `id` in the tree, mapped to where it was found. Raises on a
+    duplicate or a malformed one.
+
+    Deliberately NOT part of normalise(). normalise runs on read as well -
+    render.py calls it on every page - so putting this there would make a
+    page containing a duplicate unservable rather than unpublishable, and
+    would punish existing pages for a rule made after they were written.
+    This runs on the write path only.
+
+    The strictness is for subscription rather than for `ref`. A broken ref
+    fails visibly: a block points at nothing and someone notices. An
+    ambiguous subscription fails silently and in the wrong direction - a
+    watcher resolves `#sales` to the first match, the author edits the
+    second, and nothing errors. It simply stops being true.
+    """
+
+    found = {}
+    _collect_ids(nodes, path, found)
+
+    return found
+
+
+def _collect_ids(nodes, path, found):
+    if not isinstance(nodes, list):
+        raise FormatError(f"{path}: expected a list of nodes")
+
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+
+        here = f"{path}[{index}]"
+        value = (node.get("attrs") or {}).get("id")
+
+        if value is not None:
+            if not isinstance(value, str) or not ID_PATTERN.match(value):
+                raise FormatError(
+                    f"{here}.attrs.id: {value!r} is not a usable id. Letters, "
+                    f"digits, hyphen and underscore, up to 64 characters."
+                )
+
+            if value in found:
+                raise FormatError(
+                    f"duplicate id {value!r}: {found[value]} and {here}. An "
+                    f"id addresses one node, and a ref or a subscription "
+                    f"pointing at two of them is ambiguous."
+                )
+
+            found[value] = here
+
+        _collect_ids(node.get("children") or [], f"{here}.children", found)
 
 
 def _attrs(attrs, path):
