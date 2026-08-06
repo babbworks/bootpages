@@ -71,6 +71,11 @@ PAGE_CSP = (
     "form-action 'none'"
 )
 
+# Read-only, tokenless data that is already public to anything that can
+# fetch it. CORS only lets a browser script read what curl could already
+# get: it grants no new access, it removes an obstacle to consumers.
+CORS = (("Access-Control-Allow-Origin", "*"),)
+
 # The editor is the opposite case. It must never be framed, because a
 # clickjacked token field is a real attack against a credential that cannot
 # be revoked by anyone but its holder.
@@ -99,7 +104,8 @@ class Handler(BaseHTTPRequestHandler):
     def instance(self):
         return self.server.instance
 
-    def reply(self, status, body, kind="text/html; charset=utf-8", etag=None):
+    def reply(self, status, body, kind="text/html; charset=utf-8", etag=None,
+              extra=None):
         payload = body.encode("utf-8") if isinstance(body, str) else body
 
         self.send_response(status)
@@ -108,6 +114,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if etag:
             self.send_header("ETag", etag)
+
+        for name, value in extra or ():
+            self.send_header(name, value)
         # Every reply carries the same headers; only the body is withheld
         # on HEAD. A consumer checking whether a page still exists should
         # get the same answer either way.
@@ -126,9 +135,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(payload)
 
-    def reply_json(self, payload, status=200):
+    def reply_json(self, payload, status=200, etag=None, extra=None):
         self.reply(status, json.dumps(payload, ensure_ascii=False),
-                   "application/json; charset=utf-8")
+                   "application/json; charset=utf-8", etag=etag, extra=extra)
 
     def not_modified(self, etag):
         """
@@ -193,7 +202,7 @@ class Handler(BaseHTTPRequestHandler):
         query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
         if self.role == "pages":
-            return self.get_pages(path)
+            return self.get_pages(path, query)
 
         return self.get_editor(path, query)
 
@@ -217,16 +226,73 @@ class Handler(BaseHTTPRequestHandler):
         # origin that holds tokens.
         return self.not_found()
 
-    def get_pages(self, path):
+    def get_pages(self, path, query=None):
         # The stylesheet is the one asset this origin serves, because a
         # page needs it and inlining would mean loosening style-src.
         if path == "static/page.css":
             return self.serve_static("page.css")
 
-        if not path or path in api.METHODS or path.startswith("getPage/"):
+        # Public read data on the untrusted-content origin, deliberately.
+        #
+        # This used to 404, which was right when this origin served only
+        # rendered documents. It is reversed for the same reason the two
+        # origins exist at all: a third-party consumer should never have a
+        # reason to address the origin where author tokens live.
+        if path.startswith("getPage/"):
+            return self.serve_public_page_json(
+                path[len("getPage/"):], query or {})
+
+        # Namespace protection stays. A page whose path collides with a
+        # method name is not shadowed by one.
+        if not path or path in api.METHODS:
             return self.not_found()
 
         return self.serve_page(path)
+
+    def serve_public_page_json(self, path, query):
+        """
+        getPage, tokenless, with CORS and an ETag scoped to what was asked
+        for.
+
+        With `ref`, the ETag covers that branch alone - so an agent
+        watching one block gets 304 and no bytes when the rest of the page
+        changes around it. That is the whole of the subscription
+        mechanism: conditional GET, no per-subscriber state, nothing owed.
+        """
+
+        query = dict(query)
+        query["path"] = path
+
+        try:
+            result = api.call(self.server.db, "getPage", query, self.instance)
+
+        except api.ApiError as problem:
+            return self.reply_json(
+                {"ok": False, "error": str(problem)}, 404, extra=CORS)
+
+        # A whole-page response needs the revision as well as the digest,
+        # because the digest covers content only and a title-only edit
+        # would otherwise go unnoticed.
+        #
+        # A subtree response must NOT include it. The revision increments
+        # on every edit anywhere on the page, so mixing it in would wake a
+        # watcher for changes it explicitly asked not to hear about - which
+        # is the entire feature, defeated by one extra term.
+        if "ref_digest" in result:
+            etag = f'"{result["ref_digest"][-12:]}"'
+        else:
+            etag = f'"{result["revision"]}-{result["digest"][-12:]}"'
+
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+
+            for name, value in CORS + COMMON_HEADERS:
+                self.send_header(name, value)
+
+            return self.end_headers()
+
+        self.reply_json({"ok": True, "result": result}, etag=etag, extra=CORS)
 
     # ------------------------------------------------------------ serving
 

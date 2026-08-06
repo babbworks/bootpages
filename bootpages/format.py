@@ -192,6 +192,49 @@ def _collect_ids(nodes, path, found):
         _collect_ids(node.get("children") or [], f"{here}.children", found)
 
 
+def subtree(nodes, wanted):
+    """
+    The branch rooted at the node carrying this id, as a node list.
+
+    A node list rather than a node, so it composes with digest(),
+    render() and normalise() without any of them needing to know it came
+    from inside a page. That is the whole reason per-block subscription
+    needs no new machinery: a subtree is a node list, and digest()
+    already takes node lists, so the fingerprint of one block is the
+    existing function applied to a slice of the tree.
+
+    Refuses rather than returning empty. A subscription to something that
+    no longer exists has to be loud - an empty result is indistinguishable
+    from a block that simply has no content.
+    """
+
+    found = _find_id(nodes, wanted)
+
+    if found is None:
+        raise FormatError(f"no node with id {wanted!r}")
+
+    return [found]
+
+
+def _find_id(nodes, wanted):
+    if not isinstance(nodes, list):
+        return None
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+
+        if (node.get("attrs") or {}).get("id") == wanted:
+            return node
+
+        deeper = _find_id(node.get("children") or [], wanted)
+
+        if deeper is not None:
+            return deeper
+
+    return None
+
+
 def _attrs(attrs, path):
     """
     Attribute values are strings. Nothing else survives this function.

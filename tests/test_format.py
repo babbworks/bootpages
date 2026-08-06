@@ -286,3 +286,76 @@ def test_checking_ids_does_not_require_normalised_input():
 
     assert fmt.check_ids([{"tag": "p", "attrs": {"id": "raw"}}]) == {
         "raw": "content[0]"}
+
+
+# --------------------------------------------------------------- subtree
+
+
+TREE = [
+    {"tag": "p", "attrs": {"id": "intro"}, "children": ["opening"]},
+    {"tag": "aside", "attrs": {}, "children": [
+        {"tag": "p", "attrs": {"id": "buried"}, "children": ["inner"]},
+    ]},
+    {"tag": "p", "attrs": {}, "children": ["anonymous"]},
+]
+
+
+def test_subtree_returns_a_node_list_not_a_node():
+    """
+    A node list, so it composes with digest(), render() and normalise()
+    without any of them needing to know it came from inside a page.
+    """
+
+    found = fmt.subtree(TREE, "intro")
+
+    assert isinstance(found, list) and len(found) == 1
+    assert found[0]["children"] == ["opening"]
+
+
+def test_subtree_finds_a_node_nested_anywhere():
+    assert fmt.subtree(TREE, "buried")[0]["children"] == ["inner"]
+
+
+def test_subtree_carries_the_whole_branch():
+    tree = [{"tag": "aside", "attrs": {"id": "wrap"}, "children": [
+        {"tag": "p", "attrs": {}, "children": ["kept"]},
+    ]}]
+
+    assert fmt.subtree(tree, "wrap")[0]["children"][0]["children"] == ["kept"]
+
+
+def test_an_unknown_ref_is_refused_rather_than_empty():
+    """
+    A subscription to something that no longer exists must be loud. An
+    empty result would look like a block that simply has no content.
+    """
+
+    with pytest.raises(fmt.FormatError, match="gone"):
+        fmt.subtree(TREE, "gone")
+
+
+def test_a_subtree_digest_is_just_the_digest_of_that_list():
+    """
+    The whole reason subscription needs no new machinery: a subtree is a
+    node list, and digest() already takes node lists.
+    """
+
+    found = fmt.subtree(TREE, "intro")
+
+    assert fmt.digest(found) == fmt.digest(
+        [{"tag": "p", "attrs": {"id": "intro"}, "children": ["opening"]}])
+
+
+def test_a_subtree_digest_ignores_changes_elsewhere_on_the_page():
+    """
+    The property that makes per-block subscription worth having.
+    """
+
+    before = fmt.digest(fmt.subtree(TREE, "intro"))
+
+    edited = [
+        TREE[0],
+        {"tag": "p", "attrs": {}, "children": ["completely different"]},
+    ]
+
+    assert fmt.digest(fmt.subtree(edited, "intro")) == before

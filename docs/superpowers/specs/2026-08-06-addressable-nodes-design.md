@@ -107,8 +107,21 @@ until that block changes, and is not woken by edits elsewhere on the page.
   reordering.
 - An unknown `ref` is `REF_NOT_FOUND`, not an empty result. A subscription
   to something that no longer exists must be loud.
-- The subtree ETag combines the page revision with the subtree digest, so
-  it changes if the block changes and stays put if it does not.
+- **The subtree ETag is the subtree digest alone.** An earlier draft of
+  this spec said it should combine the page revision with the subtree
+  digest. That was wrong, and wrong in the way that would have quietly
+  destroyed the feature: `revision` increments on *every* edit anywhere on
+  the page, so mixing it in guarantees the ETag changes whenever anything
+  changes. Every watcher would be woken by every edit. Caught by an
+  end-to-end test that edited a *different* block; no test that only edited
+  the watched block would have found it.
+
+- **A `ref` response carries only what the subtree determines** — `path`,
+  `ref`, `ref_url`, `ref_digest`, `content`. No `views`, which changes on
+  every read, and no `revision` or `title`, which change on edits
+  elsewhere. Including any of them would make the body drift under an ETag
+  that cannot see it, leaving the response not even self-consistent. A
+  subscriber wanting page facts asks for the page.
 
 ### A4. No webhooks
 
