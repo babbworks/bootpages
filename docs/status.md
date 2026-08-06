@@ -123,6 +123,48 @@ Last updated 2026-08-06.
 
 ---
 
+## Backlog
+
+### `inspect.babb.tel` — the interactive consumer
+
+A static single-page app that fetches a page's JSON and renders it with
+the things the on-page bar cannot do: split view with live hover-tracking,
+click-to-copy node addresses, and a "watch this block" control that polls
+`?ref=<id>` with `If-None-Match` and shows a 304 turning into a 200.
+
+```
+page.babb.tel  ── getPage/<path> + CORS ──▶  inspect.babb.tel
+(PowerBook)         public JSON, no token       (GitHub Pages)
+```
+
+Separate for one reason: **it needs script, and published pages run under
+`default-src 'none'`.** Keeping that policy is a product decision rather
+than only a security one — "this document contains no code" is a claim a
+consuming site can check in a header, and downgrading it to "only code the
+store shipped" to gain a copy button is a bad trade.
+
+Three properties make it cheap. It costs the PowerBook nothing beyond the
+JSON it already serves; `babb.tel` already resolves to GitHub Pages, so
+hosting is free; and it has no privileged access, so **anyone could write
+a different one** — which is the claim the format makes about itself.
+
+Everything it needs already exists: `getPage` on the pages origin with
+CORS, `?ref=` returning a subtree with its own ETag, and capability pages
+for declaring what a consumer implements. Nothing in the store has to
+change.
+
+### Smaller things
+
+- **A DDNS updater** for the GoDaddy record, so a residential IP change
+  does not take `page.babb.tel` down until somebody notices.
+- **Author signatures.** `format.md` notes a digest proves two observers
+  see the same bytes but not that the store is honest; signatures would
+  close that, and the label scheme leaves room for them.
+- **The memo lens**, which `format.md` describes and nothing parses yet.
+  `tools/publish.py` converts a Markdown subset instead.
+
+---
+
 ## Performance, as measured
 
 On x86 during development. The read path was rebuilt around what these

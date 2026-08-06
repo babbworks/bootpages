@@ -111,6 +111,46 @@ def _element(tag, attrs, children, modules):
     return f"<{tag}{rendered}>{render(children, modules)}</{tag}>"
 
 
+# The lenses a reader can switch between, in the order the bar shows them.
+# JSON is included because it is what a consumer receives, and a reader
+# who wants to see what their software sees should not need to be told a
+# query string exists.
+LENSES = (("", "Read"), ("tree", "Structure"), ("json", "JSON"))
+
+
+def lens_bar(path, current=""):
+    """
+    A thin bar for switching lens. No script, deliberately and easily.
+
+    Switching lens is navigation, not interaction - three links do it. A
+    published page executes nothing, and that is a claim consuming sites
+    can check rather than a promise they have to take: `default-src
+    'none'` says it in a header. Trading that for a nicer control would
+    downgrade a verifiable property to a conditional one, and this
+    particular control does not need the trade.
+
+    Anything that genuinely needs a client - clipboard, hover-tracking
+    across panes, live subscription - belongs in a separate consumer on
+    its own origin. See docs/status.md.
+    """
+
+    if not path:
+        return ""
+
+    links = ""
+
+    for lens, label in LENSES:
+        if lens == current:
+            links += (f'<span class="here" aria-current="page">'
+                      f'{escape(label)}</span>')
+            continue
+
+        href = f"/{path}" + (f"?lens={lens}" if lens else "")
+        links += f'<a href="{escape(href, quote=True)}">{escape(label)}</a>'
+
+    return f'<nav class="lensbar" aria-label="Lenses">{links}</nav>'
+
+
 PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -121,10 +161,11 @@ PAGE = """<!doctype html>
 <address>{byline}{date}</address>
 {body}
 </article>
+{bar}
 """
 
 
-def document(title, body, author_name="", author_url="", date=""):
+def document(title, body, author_name="", author_url="", date="", path=""):
     """A whole page, ready to serve."""
 
     byline = escape(author_name or "")
@@ -140,6 +181,7 @@ def document(title, body, author_name="", author_url="", date=""):
         byline=byline,
         date=f" &middot; {escape(date)}" if date else "",
         body=body,
+        bar=lens_bar(path),
     )
 
 
@@ -221,8 +263,8 @@ TREE_PAGE = """<!doctype html>
 <link rel="stylesheet" href="/static/page.css">
 <article class="lens">
 <h1>{title}</h1>
-<p class="lensnote">The structure of this page. <a href="{path}">Read it
-instead</a>, or take the <a href="{path}?lens=json">JSON</a>.</p>
+<p class="lensnote">The structure of this page: every node, what a
+consumer does with it, and which of them can be addressed.</p>
 <dl class="facts">
 <dt>digest</dt><dd><code>{digest}</code></dd>
 <dt>revision</dt><dd>{revision}</dd>
@@ -231,6 +273,7 @@ instead</a>, or take the <a href="{path}?lens=json">JSON</a>.</p>
 </dl>
 {body}
 </article>
+{bar}
 """
 
 
@@ -250,4 +293,5 @@ def tree_document(title, nodes, path, digest, revision, modules=frozenset()):
         # Level 0 consumer, which this renderer deliberately is.
         fallbacks=escape(", ".join(missing)) or "nothing",
         body=tree(nodes, modules),
+        bar=lens_bar(path, "tree"),
     )

@@ -225,3 +225,38 @@ def test_the_json_lens_is_the_node_list(live):
 
     assert isinstance(nodes, list)
     assert nodes[0]["attrs"]["id"] == "intro"
+
+
+# ------------------------------------------------------------- lens bar
+
+
+def test_the_lens_bar_is_three_links_and_no_script(live):
+    """
+    Switching lens is navigation. A published page executes nothing, and
+    that is a claim consuming sites can check in a header rather than a
+    promise they have to take on trust.
+    """
+
+    body = fetch(f"http://127.0.0.1:{PORT}/{live['path']}")[2].decode()
+
+    assert 'class="lensbar"' in body
+    assert "?lens=tree" in body and "?lens=json" in body
+    assert "<script" not in body
+    assert "onclick" not in body and "javascript:" not in body
+
+
+def test_the_bar_marks_where_you_are_rather_than_linking_to_it(live):
+    page = f"http://127.0.0.1:{PORT}/{live['path']}"
+
+    html = fetch(page)[2].decode()
+    tree = fetch(page + "?lens=tree")[2].decode()
+
+    assert 'aria-current="page">Read<' in html
+    assert 'aria-current="page">Structure<' in tree
+
+
+def test_the_json_lens_has_no_bar_because_it_is_not_a_document(live):
+    body = fetch(f"http://127.0.0.1:{PORT}/{live['path']}?lens=json")[2]
+
+    assert b"lensbar" not in body
+    assert isinstance(json.loads(body), list)
