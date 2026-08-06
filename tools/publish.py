@@ -221,7 +221,25 @@ def main():
               f"digest {fmt.digest(nodes)}", file=sys.stderr)
         return
 
-    token = os.environ.get("BOOTPAGES_TOKEN") or getpass.getpass("token: ")
+    token = os.environ.get("BOOTPAGES_TOKEN")
+
+    if not token:
+        # getpass needs a terminal. Without one it either reads nothing or
+        # echoes the token, and both failures are quiet - so say so
+        # instead, because the alternative is a confusing empty prompt.
+        if not sys.stdin.isatty():
+            raise SystemExit(
+                "error: no token.\n\n"
+                "There is no terminal here to prompt on. Either set it in "
+                "the environment:\n\n"
+                "    read -s BOOTPAGES_TOKEN; export BOOTPAGES_TOKEN\n\n"
+                "or run this from an interactive shell."
+            )
+
+        token = getpass.getpass("token: ")
+
+    if not token.strip():
+        raise SystemExit("error: empty token")
 
     params = {"access_token": token, "title": args.title,
               "author_name": args.author_name, "content": nodes}
