@@ -2,7 +2,7 @@
 
 Live state of the `page.babb.tel` deployment. Updated as things land.
 
-Last updated 2026-08-05.
+Last updated 2026-08-06.
 
 ---
 
@@ -43,6 +43,13 @@ Last updated 2026-08-05.
 - [x] `/static/` served by nginx, never by Python
 - [x] A page published, rendered, and revalidated with a 304
 - [x] Backup timer armed and scheduled
+- [x] **Landing page served at `/`** by nginx `proxy_pass`, with a
+      canonical `Link` header naming the page's permanent address
+- [x] **`?ref=<id>` subscription live** — `getPage` on the pages origin
+      with CORS, returning a subtree with an ETag scoped to that block, so
+      a watcher is not woken by edits elsewhere on the page
+- [x] **Both lenses live** — `?lens=tree` and `?lens=json`, server
+      rendered, no script
 
 ---
 
@@ -50,23 +57,27 @@ Last updated 2026-08-05.
 
 ### Tests that have never run
 
-- [ ] **`bootpages-backup.service`** has never executed. Its systemd
-      sandbox — `MemoryDenyWriteExecute`, `SystemCallFilter=@system-service`,
-      `ProtectProc=invisible` — has never run on a PowerPC kernel. Most
-      likely thing on this list to fail.
+- [ ] **`bootpages-backup.service` has still never executed**, and the
+      deploy did not test it. deploy.sh runs the backup **as root,
+      directly**; the unit runs the same code as the `bootpages` user under
+      `MemoryDenyWriteExecute`, `SystemCallFilter=@system-service` and
+      `ProtectProc=invisible`. Same Python, different environment — so the
+      sandbox on a PowerPC kernel remains unproven, and remains the most
+      likely thing here to fail.
 
       ```sh
       sudo systemctl start bootpages-backup
       sudo -u bootpages python3 -m bootpages.backup list --dest /var/backups/bootpages
       ```
 
-- [ ] **`deploy.sh` has never run end to end anywhere.** Guards are
-      tested; the git update, unit reinstall, restart and verification are
-      not. The SSH remote path is entirely unexercised.
+- [x] **backup.py backed up a real database on PowerPC** — 4 pages, 2
+      accounts, verified against the source as it was written. Taken by
+      deploy.sh rather than by the timer.
 
-      ```sh
-      sudo /opt/bootpages/deploy.sh local deploy-and-backup
-      ```
+- [x] **`deploy.sh` ran end to end**, 2026-08-06, first attempt, clean.
+      Every gate passed: 112 tests on PowerPC, a verified backup, the git
+      update `103b37c..ad28f52`, compileall, unit reinstall, restart and
+      verification. The SSH remote path is still unexercised.
 
 - [ ] **A restore on the target.** Proven on x86; roadmap.md is right that
       a backup never restored is a hypothesis, and the hypothesis is
@@ -90,8 +101,9 @@ Last updated 2026-08-05.
 - [ ] **Narrow the 9090 ufw rule** to the LAN. Cockpit is a root-capable
       console and currently has an ALLOW from Anywhere; only the absence
       of a port forward keeps it private.
-- [ ] **Merge `deploy-and-backup` into `main`** once the two untested
-      pieces above pass. Then `deploy.sh` stops needing a ref argument.
+- [ ] **Merge `deploy-and-backup` into `main`.** deploy.sh has now proven
+      itself, which was the condition. Then deploys stop needing a ref
+      argument.
 
 ### Known gaps, deliberately
 
