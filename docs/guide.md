@@ -85,6 +85,57 @@ use rather than declared in advance.
 
 ---
 
+## The lens you actually write in
+
+Nobody writes the JSON by hand, and the verbosity of the canonical form is
+not the authoring experience. `normalise()` fills in what you omit — a
+client may post `{"tag": "li", "children": ["North"]}` and never type an
+empty brace — and a bare string is text.
+
+The lens for people is the memo:
+
+```
+title: Q3 Onboarding
+
+## Welcome
+
+Just write. Prose is prose, no markup, nothing to learn.
+
+## Expenses
+require-role: finance
+source: https://finance.example.internal/q3
+prefer-layout: table, list
+
+If you have finance access, this section loads live figures.
+Otherwise you are reading this sentence, which is the fallback.
+```
+
+The whole rule in one sentence: a heading opens a section, `key: value`
+lines immediately beneath it configure it, everything after the first
+blank line is its content. Lineage is the header block memos and mail
+have used for fifty years, which is deliberate — the structure of a
+business document and the structure of a manifest are the same structure.
+
+**Disambiguation needs no escaping.** Keys are lowercase and hyphenated,
+and are recognised only in the contiguous block directly under a heading.
+So a paragraph beginning "Note: this matters" is prose: wrong case, wrong
+place. An author never has to escape anything, and never has to be told
+why.
+
+A section with keys becomes one node carrying them, so `require-role`
+governs the whole section and fails closed. Where it does not name a tag
+with `type:`, it becomes `section` — deliberately *not* a core tag, so a
+consumer that has never heard of it renders the children by the one law
+and shows the prose anyway.
+
+The canonical bytes are still verbose, and that costs almost nothing:
+`"attrs":{}` repeated across a page compresses to a rounding error, and
+the uniform shape is what makes every node the same to a consumer and the
+digest deterministic. Verbosity where machines look, plain text where
+people do.
+
+---
+
 ## Core tags
 
 The tags every consumer must understand:
@@ -251,6 +302,58 @@ every edit including that one.
 
 ---
 
+## Addressing one block, and watching it
+
+A node may carry an `id`. That makes it addressable, and addressable
+turns out to be all subscription needs.
+
+`id` must be unique within a page, checked when the page is written. The
+strictness is for watchers rather than for links: a broken `ref` fails
+visibly, because a block points at nothing and somebody notices. An
+ambiguous *subscription* fails silently and in the wrong direction — a
+watcher resolves to the first match, the author edits the second, and
+nothing errors. It simply stops being true.
+
+Because a subtree is itself a node list, and a digest is taken of a node
+list, the fingerprint of one block costs nothing new:
+
+```
+GET /getPage/<path>?ref=sales
+```
+
+returns that branch with a digest of its own, and an ETag scoped to it. A
+watcher polls with `If-None-Match` and is told **304, no bytes** until
+that block changes — and is *not* woken when the rest of the page changes
+around it.
+
+So there is no subscription system: no per-subscriber state, no delivery
+owed, no queue. Conditional GET is the whole mechanism. On a machine that
+also has to serve readers, the difference between that and a push system
+is not an optimisation, it is whether the feature is affordable at all.
+
+---
+
+## Pulling back the curtain
+
+Every page is available in more than one lens, and switching is
+navigation rather than interaction:
+
+```
+/<path>              the page
+/<path>?lens=tree    its structure
+/<path>?lens=json    what a consumer receives
+```
+
+The tree lens shows each node's tag, whether this consumer implements it
+or falls back to its children, its attributes grouped by family, and its
+`id` as an anchor — so a node that can be addressed looks different from
+one that cannot. That teaches the format faster than this document does.
+
+A bar at the foot of each page switches between them. It contains no
+script, because three links do not need any.
+
+---
+
 ## Two origins, and the one thing that can break it
 
 The editor and published pages are served on **different ports**, and that
@@ -275,6 +378,15 @@ configuration and be wrong. This is one of the few places in the system
 where correctness lives in a config file that the software cannot
 validate, so it is worth testing directly: fetch the pages hostname and
 confirm you do not get the editor.
+
+This is also why the lens bar is three links rather than a control.
+"This document contains no code" is a claim a consuming site can check in
+a header, and bootpages are meant to be embedded by sites making exactly
+that decision. A published page here carries **zero** script tags; the
+comparable page on the service this format descends from carries eight,
+because it ships an editor alongside the document. Downgrading a
+verifiable property to "only the code the store shipped" in order to gain
+a copy button would be a poor trade.
 
 Layered underneath, the pages origin is served with a content security
 policy of `default-src 'none'`, and the renderer emits no script under any
