@@ -50,6 +50,10 @@ Last updated 2026-08-06.
       a watcher is not woken by edits elsewhere on the page
 - [x] **Both lenses live** — `?lens=tree` and `?lens=json`, server
       rendered, no script
+- [x] **Lens bar live** on the HTML and tree lenses; three links, no
+      script, `default-src 'none'` untouched
+- [x] **Second deploy through `deploy.sh`**, this time off `main` with no
+      ref argument
 
 ---
 
@@ -57,18 +61,17 @@ Last updated 2026-08-06.
 
 ### Tests that have never run
 
-- [ ] **`bootpages-backup.service` has still never executed**, and the
-      deploy did not test it. deploy.sh runs the backup **as root,
-      directly**; the unit runs the same code as the `bootpages` user under
-      `MemoryDenyWriteExecute`, `SystemCallFilter=@system-service` and
-      `ProtectProc=invisible`. Same Python, different environment — so the
-      sandbox on a PowerPC kernel remains unproven, and remains the most
-      likely thing here to fail.
+- [x] **`bootpages-backup.service` ran unattended and succeeded**,
+      2026-08-06 00:11 EDT, `Result: success`, exit 0, one second:
+      `bootpages-20260806T041117Z.db — 4 pages, 2 accounts`.
 
-      ```sh
-      sudo systemctl start bootpages-backup
-      sudo -u bootpages python3 -m bootpages.backup list --dest /var/backups/bootpages
-      ```
+      This was the item flagged as most likely to fail. The unit runs as
+      the `bootpages` user under `MemoryDenyWriteExecute`,
+      `SystemCallFilter=@system-service` and `ProtectProc=invisible` — a
+      seccomp sandbox on a 32-bit big-endian PowerPC kernel, which is not
+      a combination anyone tests upstream. It also proved the parts only
+      waiting can prove: the timer fired on its own, `RandomizedDelaySec`
+      jittered it to 00:11 rather than midnight, and `ReadWritePaths` held.
 
 - [x] **backup.py backed up a real database on PowerPC** — 4 pages, 2
       accounts, verified against the source as it was written. Taken by
@@ -101,9 +104,8 @@ Last updated 2026-08-06.
 - [ ] **Narrow the 9090 ufw rule** to the LAN. Cockpit is a root-capable
       console and currently has an ALLOW from Anywhere; only the absence
       of a port forward keeps it private.
-- [ ] **Merge `deploy-and-backup` into `main`.** deploy.sh has now proven
-      itself, which was the condition. Then deploys stop needing a ref
-      argument.
+- [x] **Merged into `main`** and deployed, 2026-08-06. Deploys are now
+      plain `sudo /opt/bootpages/deploy.sh`.
 
 ### Known gaps, deliberately
 
