@@ -33,6 +33,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bootpages import format as fmt              # noqa: E402
+from bootpages import memo                       # noqa: E402
 
 # Inline spans, tested in this order. Links first: their text may contain
 # other spans, and matching them later would break the URL apart.
@@ -192,7 +193,8 @@ def call(base, method, params):
 def main():
     parser = argparse.ArgumentParser(prog="python3 tools/publish.py")
     parser.add_argument("source")
-    parser.add_argument("--title", required=True)
+    parser.add_argument("--title", help="required for Markdown; a .memo "
+                                        "file carries its own")
     parser.add_argument("--author-name", default="")
     parser.add_argument("--path", help="edit this existing page instead of "
                                        "creating a new one")
@@ -205,11 +207,25 @@ def main():
     with open(args.source, encoding="utf-8") as handle:
         source = handle.read()
 
-    try:
-        nodes = blocks(source)
+    # The memo lens is the one the format specifies for people; Markdown
+    # is a convenience that cannot express attributes at all. Chosen by
+    # extension so neither needs a flag.
+    fields = {}
 
-    except SourceError as problem:
+    try:
+        if args.source.endswith(".memo"):
+            fields, nodes = memo.parse(source)
+        else:
+            nodes = blocks(source)
+
+    except (SourceError, fmt.FormatError) as problem:
         raise SystemExit(f"error: {problem}")
+
+    title = args.title or fields.get("title")
+
+    if not title:
+        raise SystemExit(
+            "error: no title. Pass --title, or give the memo a `title:` line.")
 
     # Validate before sending. The instance would reject a malformed node
     # list anyway; failing here names the offending path locally.
@@ -241,8 +257,10 @@ def main():
     if not token.strip():
         raise SystemExit("error: empty token")
 
-    params = {"access_token": token, "title": args.title,
-              "author_name": args.author_name, "content": nodes}
+    params = {"access_token": token, "title": title,
+              "author_name": args.author_name or fields.get("author", ""),
+              "author_url": fields.get("author-url", ""),
+              "content": nodes}
 
     if args.path:
         params["path"] = args.path
