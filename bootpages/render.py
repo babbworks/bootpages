@@ -72,7 +72,19 @@ def _node(node, modules):
     attrs = node["attrs"]
     children = node["children"]
 
-    known = tag in fmt.CORE_TAGS or tag in modules
+    # A condition this consumer cannot evaluate.
+    #
+    # format.md: "A consumer that cannot evaluate the condition must not
+    # show the node." This renderer has no notion of a viewer, so it can
+    # evaluate none of them - and the safe reading is the one the format
+    # already uses everywhere else. The node is not shown; its children
+    # are, because the confidentiality rule makes them safe by
+    # construction: data in `children` is published, data behind `source`
+    # is only pointed at. The fallback the author wrote for exactly this
+    # case is what a reader gets.
+    gated = any(fmt.family(name) == "require" for name in attrs)
+
+    known = (tag in fmt.CORE_TAGS or tag in modules) and not gated
 
     if not known:
         # The one rule: an unsupported node renders its children in
@@ -232,7 +244,12 @@ def tree(nodes, modules=frozenset()):
 
         tag = node["tag"]
         attrs = node["attrs"]
-        known = tag in fmt.CORE_TAGS or tag in modules
+        # Gated the same way, so the structure view shows a section
+        # whose condition cannot be checked as falling back - which is
+        # exactly what a reader of that page would get.
+        gated = any(fmt.family(name) == "require" for name in attrs)
+
+        known = (tag in fmt.CORE_TAGS or tag in modules) and not gated
 
         # The one law, made visible: an unknown tag renders its children,
         # so a reader can see exactly which parts of this page a Level 0

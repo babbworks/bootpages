@@ -74,11 +74,23 @@
   .watch { font-size: .75rem; margin-left: .4rem; }
   .status { font-size: .8rem; color: var(--faint); padding: 0 1.25rem 1rem; }
   .changed { color: var(--accent); font-weight: 600; }
+  .as { font-size: .85rem; color: var(--faint); display: flex; gap: .4rem;
+        align-items: center; }
+  select { padding: .35rem; border: 1px solid var(--line); border-radius: 4px;
+           background: var(--bg); color: var(--ink); font: inherit; }
+  .gatedout { opacity: .45; }
+  .gate { font-size: .7rem; color: var(--accent); border: 1px solid var(--accent);
+          border-radius: 999px; padding: 0 .4rem; margin-left: .4rem; }
 </style>
 
 <header>
   <input type="url" id="url" placeholder="https://page.babb.tel/Some-Page-08-06">
   <button id="load">Inspect</button>
+  <label class="as">read as
+    <select id="role">
+      <option value="">anyone</option>
+    </select>
+  </label>
 </header>
 
 <main>
@@ -106,6 +118,40 @@ const CORE = new Set(["a","aside","b","blockquote","br","code","em",
   "pre","s","strong","u","ul","video"]);
 
 let where = null;
+let page = null;
+
+// The store hands the same bytes to everyone. Deciding who sees what is
+// the CONSUMER's job - which is the whole argument, so this is where it
+// belongs. A site with real accounts would put the viewer's actual roles
+// here instead of a dropdown.
+const role = () => $("role").value;
+
+// format.md: a consumer that cannot evaluate a condition must not show
+// the node - it shows the children the author wrote for that case. With
+// a role selected we CAN evaluate `require-role`, so a match shows the
+// node itself; anything else falls back, exactly as an anonymous reader
+// would see it.
+function allowed(attrs) {
+  const conditions = Object.keys(attrs || {})
+    .filter((k) => k.startsWith("require-"));
+
+  if (!conditions.length) return true;
+
+  return conditions.every(
+    (k) => k === "require-role" && attrs[k] === role() && role() !== "");
+}
+
+// Every role the page itself asks for. Discovered from the document
+// rather than configured here, because the page is the declaration.
+function rolesIn(nodes, found = new Set()) {
+  for (const node of nodes || []) {
+    if (typeof node === "string") continue;
+    const want = (node.attrs || {})["require-role"];
+    if (want) found.add(want);
+    rolesIn(node.children, found);
+  }
+  return found;
+}
 
 async function load() {
   const raw = $("url").value.trim();
@@ -132,8 +178,14 @@ async function load() {
   say("");
 }
 
-function draw(page) {
+function draw(fetched) {
+  page = fetched;
   const nodes = page.content || [];
+
+  const want = [...rolesIn(nodes)].sort();
+  $("role").innerHTML = `<option value="">anyone</option>` +
+    want.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join("");
+  $("role").value = $("role").dataset.was || "";
 
   $("rendered").innerHTML =
     `<div class="facts">
@@ -154,6 +206,12 @@ function html(nodes, prefix, path = "") {
     if (typeof node === "string") return esc(node);
 
     const inner = html(node.children || [], prefix, at);
+    // Gated and not for this reader: the fallback, same as the store's
+    // own renderer gives an anonymous visitor.
+    if (!allowed(node.attrs)) {
+      return `<div data-at="${at}" class="gatedout">${inner}</div>`;
+    }
+
     if (!CORE.has(node.tag)) return `<div data-at="${at}">${inner}</div>`;
 
     const attrs = node.tag === "a" && node.attrs && node.attrs.href
@@ -175,6 +233,7 @@ function tree(nodes, path) {
     }
 
     const known = CORE.has(node.tag);
+    const shut = !allowed(node.attrs);
     const attrs = node.attrs || {};
     const id = attrs.id;
 
@@ -188,6 +247,7 @@ function tree(nodes, path) {
               <button class="watch" data-ref="${esc(id)}">watch</button>`
            : `<span class="anon">no id</span>`}
       ${known ? "" : `<span class="note">falls back to children</span>`}
+      ${shut ? `<span class="gate">gated</span>` : ""}
       ${rows}${tree(node.children || [], at)}</div>`;
   }).join("");
 }
@@ -266,6 +326,11 @@ async function watch(ref, button) {
 }
 
 const say = (text) => { $("status").textContent = text; };
+
+$("role").addEventListener("change", () => {
+  $("role").dataset.was = $("role").value;
+  if (page) draw(page);
+});
 
 $("load").addEventListener("click", load);
 $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });

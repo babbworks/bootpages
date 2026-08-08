@@ -1,0 +1,141 @@
+title: Meridian Mk II — an open field weather station
+author: Babb Works
+
+This page is one document that four different people read differently. A
+visitor sees the project. A contributor also sees the build. Procurement
+also sees what things cost. Compliance also sees the test results.
+
+Nothing is duplicated and nothing is hidden by a second copy. The page
+says what each part requires, and the site showing it decides who gets
+what. If a site cannot decide, it shows the sentence the author wrote for
+exactly that case.
+
+---
+
+## What it is
+
+Meridian is a solar-powered weather station meant to sit on a fence post
+for five years without anyone visiting it. Temperature, humidity,
+pressure, wind, and rainfall, logged locally and pushed over LoRa when a
+gateway is in range.
+
+The Mk II is the first version we would put somewhere inconvenient.
+
+## Specifications
+id: specs
+prefer-layout: table, list
+source: https://meridian.example/specs.json
+
+A site that can fetch and lay out a table shows the current figures. This
+sentence is what everyone else gets: enclosure 180×140×95mm, IP67, mast
+or wall mount, 2.4W panel, 18650 cell, LoRa 915MHz, sampling every 60
+seconds, five-year design life.
+
+## Field photographs
+id: field-photos
+type: gallery
+source: https://meridian.example/photos
+prefer-layout: grid, carousel, list
+
+Eleven photographs from the Skeena valley deployment, September to March,
+including two weeks under snow. A site that implements galleries shows
+them; this sentence is the caption for one that does not.
+
+---
+
+## Build instructions
+id: build
+require-role: contributor
+source: https://meridian.example/build
+
+The full assembly sequence, torque figures and calibration steps are for
+contributors. If you are reading this line instead, you are not being
+refused anything — the build is public, it simply lives in the repository
+rather than in this page.
+
+## Bill of materials
+id: bom
+require-role: contributor
+prefer-layout: table, list
+source: https://meridian.example/bom.csv
+
+Forty-one line items, of which nine are things you cannot substitute
+without recalibrating. The sensor stack alone is the BME280, the SHT45
+for cross-checking humidity drift, and a reed-switch rain gauge that has
+outlasted two tipping-bucket designs.
+
+## Firmware notes
+id: firmware
+require-role: contributor
+prefer-layout: code, list
+
+The radio duty cycle is the whole design. Everything else is a
+consequence of keeping the transmitter asleep for 99.4% of every hour.
+
+---
+
+## Supplier pricing
+id: pricing
+require-role: procurement
+source: https://meridian.internal/pricing
+on-unsupported: omit
+
+## Tooling and lead times
+id: tooling
+require-role: procurement
+source: https://meridian.internal/leadtimes
+
+Injection tooling for the enclosure, and who holds it. Visible to
+procurement. Everyone else gets this sentence, which is deliberately
+uninteresting.
+
+---
+
+## Certification status
+id: compliance
+require-role: compliance
+meta-valid-until: 2027-03-01
+source: https://meridian.internal/compliance
+
+Radio conformance, ingress-protection test results and the EMC report.
+The `meta-valid-until` on this section is not decoration: after that date
+a consumer should stop treating these results as current, because the
+certificate behind them expires.
+
+## Open questions
+id: questions
+
+Three things we have not settled. Whether the rain gauge should be
+serviceable without opening the main enclosure. Whether five years is
+honest or optimistic for the cell. And whether a second radio is worth
+the power budget in valleys where the gateway is intermittent.
+
+---
+
+## How to read this page
+
+Look at the same page four ways using the bar at the foot of it.
+
+The structure view shows every section, its attributes grouped by family,
+and whether this consumer implements the tag or is falling back. The
+sections marked as falling back are doing exactly what the format
+promises: showing you the sentence the author wrote for a reader who
+cannot get the real thing.
+
+The memo view shows the text this page was written in — including the
+`require-role` lines, because who may see a section is not itself a
+secret. The gate is public; what it guards is not.
+
+The JSON view is what a consuming site actually receives.
+
+## Watching one part of it
+id: watching
+ref: #specs
+
+Every section above with an `id` can be watched on its own. Ask for
+`?ref=specs` and you are told nothing has changed until that section
+changes — not when the photographs are updated, not when a supplier price
+moves, not when this paragraph is rewritten.
+
+That is the whole subscription mechanism: no account, no registration, no
+delivery owed to anyone. Ask again later and be told 304.
