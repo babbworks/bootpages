@@ -603,6 +603,13 @@ and they drift.
 | YAML | tooling and precision |
 | JSON | the wire |
 | HTML | a consumer displaying the page |
+| Tree | seeing what a consumer does with each node |
+
+The tree lens was added after the others and is not a writing lens: it
+renders the structure — each node's tag, whether the consumer implements
+it or falls back, its attributes by family, and its `id` as an anchor. It
+projects the same node list and adds no semantics, which is the only test
+a lens has to pass.
 
 The canonical one-line string is not among them, and no person or consumer
 ever handles it. Authors see the memo lens, consumers receive the tree,

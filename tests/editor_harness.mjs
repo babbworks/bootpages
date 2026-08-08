@@ -399,8 +399,8 @@ assert.equal(context.toNodes()[0].attrs, undefined,
 idTag.dispatchEvent("click", {preventDefault() {}});
 
 assert.equal(idInput.hidden, false, "clicking reveals the field");
-assert.equal(idInput.value, "quarterly-sales-figures",
-  "the suggestion is slugged from the block's own words");
+assert.equal(idInput.value, "id: quarterly-sales-figures",
+  "the suggestion is slugged from the block's own words, in memo syntax");
 assert.equal(context.toNodes()[0].attrs, undefined,
   "a suggestion is not an id until the author settles on it");
 
@@ -418,17 +418,29 @@ idBlockB.children.find((k) => k.className === "idtag")
   .dispatchEvent("click", {preventDefault() {}});
 
 assert.equal(idBlockB.children.find((k) => k.className === "idinput").value,
-  "quarterly-sales-figures-2",
+  "id: quarterly-sales-figures-2",
   "a colliding suggestion is de-duplicated, as page paths are");
 
 // Anything the pattern would reject is cleaned rather than refused.
 const idBlockC = makeBlock("p", "x");
 const thirdInput = idBlockC.children.find((k) => k.className === "idinput");
-thirdInput.value = "Not A Valid Id!!";
+thirdInput.value = "id: Not A Valid Id!!";
 thirdInput.dispatchEvent("blur");
 
 assert.equal(context.toNodes()[2].attrs.id, "not-a-valid-id",
   "an id is slugged to what the store will accept");
+
+// The panel speaks the memo lens's own syntax, so any attribute is
+// reachable - which is what stopped the editor being a weaker client
+// than a text file.
+thirdInput.value = "id: gated\nrequire-role: finance\nprefer-layout: table, list";
+thirdInput.dispatchEvent("blur");
+
+const gated = context.toNodes()[2].attrs;
+assert.equal(gated["require-role"], "finance",
+  "require- is reachable from the editor at last");
+assert.equal(gated["prefer-layout"], "table, list");
+assert.equal(gated.id, "gated");
 
 // Clearing it removes the address rather than leaving an empty one.
 thirdInput.value = "";

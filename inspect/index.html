@@ -1,0 +1,276 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inspect a bootpage</title>
+
+<!--
+  A consumer, not part of the store.
+
+  This exists on its own origin for one reason: it needs script, and
+  published pages are served under `default-src 'none'`. Keeping that is a
+  product decision as much as a security one - "this document contains no
+  code" is a claim a consuming site can check in a header, and bootpages
+  are meant to be embedded by sites making exactly that decision.
+
+  So the interactive things live here instead: hover to highlight, click
+  to copy an address, and watch one block for changes. It holds no
+  credential, has no privileged access, and reads only what curl could
+  already fetch. Anyone could write a different one - which is the claim
+  the format makes about itself.
+
+  Static. No build, no server, no dependency. Host it anywhere.
+-->
+
+<style>
+  :root {
+    --ink: #111; --bg: #fff; --faint: #6e6e6e;
+    --line: #e4e4e4; --accent: #2b6cb0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #ececec; --bg: #141414; --faint: #9a9a9a;
+      --line: #2e2e2e; --accent: #7fb3e8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink); background: var(--bg);
+    font: 15px/1.6 system-ui, sans-serif;
+  }
+  header {
+    display: flex; gap: .5rem; padding: .75rem;
+    border-bottom: 1px solid var(--line); align-items: center;
+    flex-wrap: wrap;
+  }
+  input[type=url] {
+    flex: 1; min-width: 18rem; padding: .4rem .6rem;
+    border: 1px solid var(--line); border-radius: 4px;
+    background: var(--bg); color: var(--ink); font: inherit;
+  }
+  button {
+    padding: .4rem .9rem; border: 1px solid var(--line); border-radius: 4px;
+    background: transparent; color: var(--ink); font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: var(--faint); }
+  main { display: grid; grid-template-columns: 1fr 1fr; min-height: 90vh; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  section { padding: 1rem 1.25rem; overflow-x: auto; }
+  #rendered { border-right: 1px solid var(--line); }
+  .facts { color: var(--faint); font-size: .8rem; margin-bottom: 1rem; }
+  .facts code { word-break: break-all; }
+
+  .n { border-left: 2px solid var(--line); padding: .3rem 0 .3rem .7rem;
+       margin: .2rem 0 .2rem .5rem; }
+  .n.fallback { border-left-color: var(--accent); }
+  .n.lit, .rendered-lit { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .tag { font-family: ui-monospace, monospace; font-weight: 600; font-size: .85rem; }
+  .id { font-family: ui-monospace, monospace; font-size: .8rem; color: var(--accent);
+        cursor: pointer; }
+  .anon { font-size: .8rem; color: var(--faint); }
+  .note { font-size: .75rem; color: var(--accent); }
+  .a { font-size: .8rem; display: flex; gap: .5rem; }
+  .a .f { color: var(--faint); text-transform: uppercase; font-size: .7rem;
+          min-width: 5rem; }
+  .watch { font-size: .75rem; margin-left: .4rem; }
+  .status { font-size: .8rem; color: var(--faint); padding: 0 1.25rem 1rem; }
+  .changed { color: var(--accent); font-weight: 600; }
+</style>
+
+<header>
+  <input type="url" id="url" placeholder="https://page.babb.tel/Some-Page-08-06">
+  <button id="load">Inspect</button>
+</header>
+
+<main>
+  <section id="rendered"></section>
+  <section id="structure"></section>
+</main>
+<p class="status" id="status"></p>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+// Everything this needs is already public: getPage on the pages origin
+// takes no token and answers with Access-Control-Allow-Origin, so a page
+// can be read from any origin by anything.
+function endpoint(pageUrl) {
+  const u = new URL(pageUrl);
+  const path = u.pathname.replace(/^\//, "");
+  return {api: `${u.origin}/getPage/${path}`, origin: u.origin, path};
+}
+
+const CORE = new Set(["a","aside","b","blockquote","br","code","em",
+  "figcaption","figure","h3","h4","hr","i","iframe","img","li","ol","p",
+  "pre","s","strong","u","ul","video"]);
+
+let where = null;
+
+async function load() {
+  const raw = $("url").value.trim();
+  if (!raw) return;
+
+  let target;
+  try { target = endpoint(raw); } catch { return say("That is not a URL."); }
+  where = target;
+
+  say("Fetching…");
+
+  let payload;
+  try {
+    const response = await fetch(`${target.api}?return_content=true`);
+    payload = await response.json();
+  } catch (problem) {
+    return say(`Could not reach it: ${problem.message}. The pages origin
+      sends CORS, so a failure here is usually the address.`);
+  }
+
+  if (!payload.ok) return say(`The store said: ${payload.error}`);
+
+  draw(payload.result);
+  say("");
+}
+
+function draw(page) {
+  const nodes = page.content || [];
+
+  $("rendered").innerHTML =
+    `<div class="facts">
+       <div><code>${esc(page.digest)}</code></div>
+       <div>revision ${esc(page.revision)} · ${esc(page.views)} views</div>
+     </div>` + html(nodes, "r");
+
+  $("structure").innerHTML = tree(nodes, "");
+  wire();
+}
+
+// The one law, applied here too: a tag this consumer does not implement
+// renders its children. It implements none, exactly as the reference
+// renderer does, so every module falls back and you can see it happen.
+function html(nodes, prefix, path = "") {
+  return nodes.map((node, i) => {
+    const at = `${path}.${i}`;
+    if (typeof node === "string") return esc(node);
+
+    const inner = html(node.children || [], prefix, at);
+    if (!CORE.has(node.tag)) return `<div data-at="${at}">${inner}</div>`;
+
+    const attrs = node.tag === "a" && node.attrs && node.attrs.href
+      ? ` href="${esc(node.attrs.href)}"` : "";
+    if (["br","hr","img"].includes(node.tag)) {
+      return `<${node.tag}${node.attrs && node.attrs.src
+        ? ` src="${esc(node.attrs.src)}"` : ""} data-at="${at}">`;
+    }
+    return `<${node.tag}${attrs} data-at="${at}">${inner}</${node.tag}>`;
+  }).join("");
+}
+
+function tree(nodes, path) {
+  return nodes.map((node, i) => {
+    const at = `${path}.${i}`;
+    if (typeof node === "string") {
+      return `<div class="n" data-at="${at}"><span class="anon">"${esc(
+        node.slice(0, 60))}"</span></div>`;
+    }
+
+    const known = CORE.has(node.tag);
+    const attrs = node.attrs || {};
+    const id = attrs.id;
+
+    const rows = Object.keys(attrs).sort().map((k) =>
+      `<div class="a"><span class="f">${esc(family(k))}</span>
+       <code>${esc(k)}</code><span>${esc(attrs[k])}</span></div>`).join("");
+
+    return `<div class="n ${known ? "" : "fallback"}" data-at="${at}">
+      <span class="tag">${esc(node.tag)}</span>
+      ${id ? `<span class="id" data-copy="${esc(id)}">#${esc(id)}</span>
+              <button class="watch" data-ref="${esc(id)}">watch</button>`
+           : `<span class="anon">no id</span>`}
+      ${known ? "" : `<span class="note">falls back to children</span>`}
+      ${rows}${tree(node.children || [], at)}</div>`;
+  }).join("");
+}
+
+const family = (name) => {
+  for (const p of ["require-", "prefer-", "on-", "meta-"]) {
+    if (name.startsWith(p)) return p.slice(0, -1);
+  }
+  return "structural";
+};
+
+// Hover one pane, light up the other. This is the whole reason the
+// inspector is a separate consumer rather than part of a page.
+function wire() {
+  for (const el of document.querySelectorAll("[data-at]")) {
+    el.addEventListener("mouseover", (event) => {
+      event.stopPropagation();
+      paint(el.dataset.at, true);
+    });
+    el.addEventListener("mouseout", () => paint(el.dataset.at, false));
+  }
+
+  for (const el of document.querySelectorAll("[data-copy]")) {
+    el.addEventListener("click", () => {
+      const address = `${where.origin}/${where.path}#${el.dataset.copy}`;
+      if (navigator.clipboard) navigator.clipboard.writeText(address);
+      say(`Copied ${address}`);
+    });
+  }
+
+  for (const el of document.querySelectorAll("[data-ref]")) {
+    el.addEventListener("click", () => watch(el.dataset.ref, el));
+  }
+}
+
+function paint(at, on) {
+  for (const el of document.querySelectorAll(`[data-at="${CSS.escape(at)}"]`)) {
+    el.classList.toggle("lit", on);
+  }
+}
+
+// Subscription, such as it is: a conditional GET on one block.
+//
+// There is no subscription system to talk to. The store holds no
+// per-subscriber state and owes no delivery - it just answers 304 until
+// that block changes, and not when the rest of the page changes around it.
+async function watch(ref, button) {
+  if (button.dataset.on) {
+    clearInterval(Number(button.dataset.on));
+    delete button.dataset.on;
+    button.textContent = "watch";
+    return;
+  }
+
+  const url = `${where.api}?ref=${encodeURIComponent(ref)}`;
+  const first = await fetch(url);
+  let etag = first.headers.get("ETag");
+
+  button.textContent = "watching";
+  say(`Watching #${ref}. Edit that block and this will notice; edit any
+       other and it will not.`);
+
+  const timer = setInterval(async () => {
+    const response = await fetch(url, {headers: {"If-None-Match": etag}});
+
+    if (response.status === 200) {
+      etag = response.headers.get("ETag");
+      button.textContent = "changed";
+      button.classList.add("changed");
+      say(`#${ref} changed at ${new Date().toLocaleTimeString()}`);
+      load();
+    }
+  }, 5000);
+
+  button.dataset.on = String(timer);
+}
+
+const say = (text) => { $("status").textContent = text; };
+
+$("load").addEventListener("click", load);
+$("url").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+
+// ?page=… so an address can be shared.
+const asked = new URLSearchParams(location.search).get("page");
+if (asked) { $("url").value = asked; load(); }
+</script>

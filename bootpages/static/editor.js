@@ -479,7 +479,7 @@ function makeBlock(type = "p", text = "", at = null, keep = null) {
   const area = field(block, PLACEHOLDER[type] || "");
   area.value = text;
 
-  if (type !== "kept") addIdControl(block);
+  if (type !== "kept") addAttrControl(block);
 
   area.addEventListener("keydown", (event) => onKey(event, block, area));
 
@@ -847,42 +847,86 @@ function representable(node) {
   return EDITABLE.has(node.tag) && plainText(node);
 }
 
-function addIdControl(block) {
+function attrsToText(attrs) {
+  return Object.keys(attrs).sort().map((k) => `${k}: ${attrs[k]}`).join("\n");
+}
+
+// The same shape the memo lens uses under a heading, deliberately. An
+// author who has written one has already learned this, and the format
+// gains no second syntax to drift from the first.
+function textToAttrs(text) {
+  const attrs = {};
+
+  for (const line of String(text || "").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const at = trimmed.indexOf(":");
+    if (at < 1) continue;
+
+    const name = trimmed.slice(0, at).trim();
+    if (!/^[a-z][a-z0-9-]*$/.test(name)) continue;
+
+    attrs[name] = trimmed.slice(at + 1).trim();
+  }
+
+  if (attrs.id) attrs.id = idSlug(attrs.id);
+  if (attrs.id === "") delete attrs.id;
+
+  return attrs;
+}
+
+// One control for everything a block carries.
+//
+// The editor validates almost nothing here: the families are enforced in
+// the store, on write, so a client that guessed at them would be a second
+// place to keep correct. What it does enforce is the id, because that is
+// the one an author expects to be able to type loosely.
+function addAttrControl(block) {
   const tag = document.createElement("button");
   tag.className = "idtag";
   tag.tabIndex = -1;
-  tag.textContent = blockAttrs(block).id ? `#${blockAttrs(block).id}` : "#";
-  tag.title = "Give this block an address, so it can be watched";
 
-  const input = document.createElement("input");
-  input.className = "idinput";
-  input.placeholder = "id";
-  input.hidden = true;
-  input.value = blockAttrs(block).id || "";
+  const panel = document.createElement("textarea");
+  panel.className = "idinput";
+  panel.rows = 3;
+  panel.placeholder = "id: something\nrequire-role: staff";
+  panel.hidden = true;
+
+  const label = () => {
+    const attrs = blockAttrs(block);
+    const count = Object.keys(attrs).length;
+
+    tag.textContent = attrs.id ? `#${attrs.id}`
+      : count ? `${count} attr${count > 1 ? "s" : ""}` : "#";
+  };
 
   const show = () => {
-    input.hidden = false;
-    // Suggested, not applied. Nothing is written until the author leaves
-    // the field, so an accidental click costs nothing.
-    if (!input.value) input.value = suggestId(block);
-    input.focus();
+    panel.hidden = false;
+    panel.value = attrsToText(blockAttrs(block));
+
+    // Suggested, never applied. Nothing is written until the author
+    // leaves the panel, so an accidental click costs nothing.
+    if (!panel.value) panel.value = `id: ${suggestId(block)}`;
+
+    panel.focus();
   };
 
   const settle = () => {
-    const id = setBlockId(block, input.value);
-    input.value = id;
-    tag.textContent = id ? `#${id}` : "#";
-    input.hidden = true;
+    setBlockAttrs(block, textToAttrs(panel.value));
+    panel.hidden = true;
+    label();
   };
 
   tag.addEventListener("click", (event) => { event.preventDefault(); show(); });
-  input.addEventListener("blur", settle);
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === "Escape") settle();
+  panel.addEventListener("blur", settle);
+  panel.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") settle();
   });
 
   block.appendChild(tag);
-  block.appendChild(input);
+  block.appendChild(panel);
+  label();
 }
 
 // The reverse, for editing a page that already exists.

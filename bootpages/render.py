@@ -115,7 +115,8 @@ def _element(tag, attrs, children, modules):
 # JSON is included because it is what a consumer receives, and a reader
 # who wants to see what their software sees should not need to be told a
 # query string exists.
-LENSES = (("", "Read"), ("tree", "Structure"), ("json", "JSON"))
+LENSES = (("", "Read"), ("memo", "Memo"), ("tree", "Structure"),
+          ("json", "JSON"))
 
 
 def lens_bar(path, current=""):

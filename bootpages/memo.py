@@ -24,6 +24,7 @@ contiguous block directly under a heading. So a paragraph beginning
 the blank line. No author ever has to escape anything.
 """
 
+import json
 import re
 
 from .format import FormatError
@@ -179,3 +180,127 @@ def _paragraph(lines, index):
         index += 1
 
     return {"tag": "p", "children": [" ".join(run)]}, index
+
+
+# ------------------------------------------------------------- projection
+
+
+def render(nodes, fields=None):
+    """
+    A node list back to memo text.
+
+    The other direction, which is what makes the memo a *lens* rather than
+    an import format. A lens you can only write through is a converter;
+    one you can read through as well is a view of the document, and the
+    editor can then offer "edit this as text" over the same page rather
+    than a second tool with its own idea of what a page is.
+
+    Not every tree has a memo form - deep nesting has nowhere to go in a
+    format whose whole shape is heading, keys, prose. Those nodes are
+    written as a fenced block carrying their JSON, which round-trips
+    through parse() as content rather than being lost. Honest, and ugly
+    exactly where the document is doing something the lens cannot say.
+    """
+
+    out = []
+    fields = fields or {}
+
+    for name in DOCUMENT_FIELDS:
+        if fields.get(name):
+            out.append(f"{name}: {fields[name]}")
+
+    if out:
+        out.append("")
+
+    index = 0
+
+    while index < len(nodes):
+        node = nodes[index]
+        following = nodes[index + 1] if index + 1 < len(nodes) else None
+
+        # A heading and the section it configures are one thing in this
+        # lens, and must be emitted as one: the keys go IMMEDIATELY under
+        # the heading, with no blank line, or they are prose when read
+        # back. The rule that makes disambiguation free also makes the
+        # blank line load-bearing.
+        if _is_heading(node) and _is_section(following):
+            out.append(_heading_line(node))
+            out.extend(_keys(following))
+            out.append("")
+            out.extend(_prose(following.get("children") or []))
+            index += 2
+            continue
+
+        out.extend(_emit(node))
+        index += 1
+
+    return "\n".join(out).rstrip() + "\n"
+
+
+def _is_heading(node):
+    return isinstance(node, dict) and node.get("tag") in ("h3", "h4")
+
+
+def _is_section(node):
+    """A node this lens can write as keys under a heading."""
+
+    if not isinstance(node, dict) or not node.get("attrs"):
+        return False
+
+    return all(isinstance(kid, dict) and kid.get("tag") == "p"
+               for kid in node.get("children") or [])
+
+
+def _heading_line(node):
+    prefix = "##" if node["tag"] == "h3" else "###"
+
+    return f"{prefix} {_text(node.get('children') or [])}"
+
+
+def _keys(node):
+    attrs = dict(node.get("attrs") or {})
+    lines = []
+
+    if node.get("tag") != DEFAULT_SECTION_TAG:
+        lines.append(f"type: {node['tag']}")
+
+    lines.extend(f"{name}: {attrs[name]}" for name in sorted(attrs))
+
+    return lines
+
+
+def _prose(children):
+    out = []
+
+    for kid in children:
+        out.append(_text(kid.get("children") or []))
+        out.append("")
+
+    return out
+
+
+def _emit(node):
+    if isinstance(node, str):
+        return [node, ""]
+
+    tag = node.get("tag")
+    children = node.get("children") or []
+
+    if _is_heading(node):
+        return [_heading_line(node), ""]
+
+    if tag == "p" and not node.get("attrs"):
+        return [_text(children), ""]
+
+    if _is_section(node):
+        # A section with no heading of its own still needs one to hang its
+        # keys from, since the lens has nowhere else to put them.
+        return ["## " + (node.get("attrs", {}).get("id") or tag)] + \
+               _keys(node) + [""] + _prose(children)
+
+    # Anything the lens cannot say, said plainly rather than lost.
+    return ["```json", json.dumps(node, ensure_ascii=False), "```", ""]
+
+
+def _text(children):
+    return " ".join(c for c in children if isinstance(c, str)).strip()

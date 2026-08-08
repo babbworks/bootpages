@@ -35,7 +35,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import api, render, store
+from . import api, memo, render, store
 from .config import ConfigError, Instance
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -335,7 +335,7 @@ class Handler(BaseHTTPRequestHandler):
 
         lens = (query or {}).get("lens", "")
 
-        if lens not in ("", "tree", "json"):
+        if lens not in ("", "memo", "tree", "json"):
             return self.not_found()
 
         etag = page_etag(row, lens)
@@ -348,8 +348,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("If-None-Match") == etag:
             return self.not_modified(etag)
 
-        kind = ("application/json; charset=utf-8" if lens == "json"
-                else "text/html; charset=utf-8")
+        kind = {"json": "application/json; charset=utf-8",
+                "memo": "text/plain; charset=utf-8"}.get(
+                    lens, "text/html; charset=utf-8")
 
         self.reply(200, document_for(row, lens), kind, etag=etag)
 
@@ -400,6 +401,11 @@ def document_for(row, lens=""):
 
     if lens == "json":
         html = json.dumps(nodes, indent=2, ensure_ascii=False)
+
+    elif lens == "memo":
+        html = memo.render(nodes, {"title": row["title"],
+                                   "author": row["author_name"],
+                                   "author-url": row["author_url"]})
 
     elif lens == "tree":
         html = render.tree_document(
