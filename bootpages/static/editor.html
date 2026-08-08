@@ -109,6 +109,42 @@
   .block:focus-within .plus, .block:hover .plus { opacity: 1; }
   .plus:hover { color: var(--ink); border-color: var(--faint); }
 
+  /* The id control. Quiet until wanted, like the plus - an address is
+     something you choose to give a block, not something every block
+     nags you about. A block that already has one keeps it visible,
+     because it is a promise somebody may be relying on. */
+  .idtag {
+    position: absolute;
+    right: -0.25rem;
+    top: -0.1rem;
+    border: 0;
+    background: transparent;
+    color: var(--faint);
+    font: 0.75rem/1.6 var(--mono, monospace);
+    cursor: pointer;
+    opacity: 0;
+    padding: 0 0.3rem;
+  }
+
+  .block:focus-within .idtag, .block:hover .idtag { opacity: 1; }
+  .idtag:hover { color: var(--ink); }
+
+  /* Once a block has an address, it stays shown. */
+  .block[data-attrs] .idtag { opacity: 0.75; }
+
+  .idinput {
+    position: absolute;
+    right: -0.25rem;
+    top: 1.2rem;
+    width: 12rem;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 0.8rem/1.4 var(--mono, monospace);
+    padding: 0.2rem 0.4rem;
+  }
+
   .block[data-type="h3"] textarea { font-size: 1.5rem; font-weight: 700; }
   .block[data-type="h4"] textarea { font-size: 1.15rem; font-weight: 700; }
 

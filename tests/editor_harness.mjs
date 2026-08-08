@@ -112,7 +112,17 @@ function element(tag = "div", id = "") {
     querySelectorAll: () => [],
     focus() { context.focused = this; },
     setSelectionRange(a, b) { this.selectionStart = a; this.selectionEnd = b; },
-    addEventListener() {},
+    // Real listeners, because a stub that accepts a handler and throws it
+    // away reports success for code that never runs. The same failure the
+    // innerHTML property had: a write accepted and quietly ignored.
+    _on: {},
+    addEventListener(type, fn) {
+      (this._on[type] || (this._on[type] = [])).push(fn);
+    },
+    dispatchEvent(type, event = {}) {
+      for (const fn of this._on[type] || []) fn(event);
+    },
+
     getBoundingClientRect: () => ({top: 0, left: 0}),
   };
 
@@ -367,3 +377,64 @@ assert.deepEqual(fill([edited[1]]), fill([original[1]]),
   "editing one block must not disturb another");
 
 console.log("  round trip keeps attributes, ids, and nodes it cannot draw");
+
+// ------------------------------------------------------------------ ids
+//
+// An id is never generated. It is suggested, and only written when the
+// author leaves the field - because a subscription is a promise from the
+// author, and a generated id is a promise nobody made.
+
+document.getElementById("blocks").innerHTML = "";
+
+const idBlockA = makeBlock("p", "Quarterly sales figures");
+const idTag = idBlockA.children.find((k) => k.className === "idtag");
+const idInput = idBlockA.children.find((k) => k.className === "idinput");
+
+assert.ok(idTag && idInput, "every editable block offers an id control");
+assert.equal(idTag.textContent, "#", "a block with no id shows a bare hash");
+assert.equal(idInput.hidden, true, "the field stays out of the way until asked");
+assert.equal(context.toNodes()[0].attrs, undefined,
+  "freestyle prose carries no id, which is the correct outcome");
+
+idTag.dispatchEvent("click", {preventDefault() {}});
+
+assert.equal(idInput.hidden, false, "clicking reveals the field");
+assert.equal(idInput.value, "quarterly-sales-figures",
+  "the suggestion is slugged from the block's own words");
+assert.equal(context.toNodes()[0].attrs, undefined,
+  "a suggestion is not an id until the author settles on it");
+
+idInput.dispatchEvent("blur");
+
+assert.equal(context.toNodes()[0].attrs.id, "quarterly-sales-figures",
+  "settling writes the id");
+assert.equal(idTag.textContent, "#quarterly-sales-figures",
+  "and the block shows the address it now has");
+
+// Unique within the page, because the store refuses duplicates - and
+// refuses them so a subscription cannot resolve to two nodes.
+const idBlockB = makeBlock("p", "Quarterly sales figures");
+idBlockB.children.find((k) => k.className === "idtag")
+  .dispatchEvent("click", {preventDefault() {}});
+
+assert.equal(idBlockB.children.find((k) => k.className === "idinput").value,
+  "quarterly-sales-figures-2",
+  "a colliding suggestion is de-duplicated, as page paths are");
+
+// Anything the pattern would reject is cleaned rather than refused.
+const idBlockC = makeBlock("p", "x");
+const thirdInput = idBlockC.children.find((k) => k.className === "idinput");
+thirdInput.value = "Not A Valid Id!!";
+thirdInput.dispatchEvent("blur");
+
+assert.equal(context.toNodes()[2].attrs.id, "not-a-valid-id",
+  "an id is slugged to what the store will accept");
+
+// Clearing it removes the address rather than leaving an empty one.
+thirdInput.value = "";
+thirdInput.dispatchEvent("blur");
+
+assert.equal(context.toNodes()[2].attrs, undefined,
+  "clearing the field removes the id");
+
+console.log("  ids are suggested, de-duplicated, and never invented");

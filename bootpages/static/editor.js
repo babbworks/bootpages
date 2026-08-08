@@ -479,6 +479,8 @@ function makeBlock(type = "p", text = "", at = null, keep = null) {
   const area = field(block, PLACEHOLDER[type] || "");
   area.value = text;
 
+  if (type !== "kept") addIdControl(block);
+
   area.addEventListener("keydown", (event) => onKey(event, block, area));
 
   if (at && at.nextSibling) {
@@ -741,6 +743,82 @@ function splitRow(row) {
   return [row.trim()];
 }
 
+// ------------------------------------------------------------------ ids
+//
+// An id is what makes one block addressable, and addressable is all a
+// subscription needs: a watcher polls ?ref=<id> and is told nothing
+// changed until that block changes.
+//
+// Deliberately never automatic. A subscription is a promise from the
+// author to a watcher, and a generated id is a promise nobody made and
+// nobody can keep - positional ids break when a paragraph is inserted,
+// content-derived ones change when the content does, which is useless for
+// watching a thing AS it changes. So freestyle prose gets no ids, and
+// that is the right outcome: nothing on the page claims to be watchable.
+//
+// What is offered instead is a suggestion, slugged from the block's own
+// words the way a page path is slugged from its title, and de-duplicated
+// the way free_path() does. Accept it, rename it, or ignore it.
+
+const blockAttrs = (block) =>
+  (block.dataset.attrs ? JSON.parse(block.dataset.attrs) : {});
+
+function setBlockAttrs(block, attrs) {
+  if (Object.keys(attrs).length) {
+    block.dataset.attrs = JSON.stringify(attrs);
+  } else {
+    delete block.dataset.attrs;
+  }
+}
+
+// Must satisfy format.ID_PATTERN, which the store enforces on write:
+// letters, digits, hyphen and underscore, up to 64.
+const idSlug = (text) => String(text || "").toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+
+function takenIds(except) {
+  const taken = new Set();
+
+  for (const other of $("blocks").children) {
+    if (other === except) continue;
+
+    const id = blockAttrs(other).id;
+    if (id) taken.add(id);
+  }
+
+  return taken;
+}
+
+// Unique within the page, because the store refuses duplicates - and
+// refuses them precisely so a subscription cannot resolve to two nodes.
+function suggestId(block) {
+  const base = idSlug(block.querySelector("textarea").value)
+    || block.dataset.type || "block";
+  const taken = takenIds(block);
+
+  if (!taken.has(base)) return base;
+
+  let n = 2;
+  while (taken.has(`${base}-${n}`)) n += 1;
+
+  return `${base}-${n}`;
+}
+
+function setBlockId(block, value) {
+  const attrs = blockAttrs(block);
+  const id = idSlug(value);
+
+  if (id) {
+    attrs.id = id;
+  } else {
+    delete attrs.id;
+  }
+
+  setBlockAttrs(block, attrs);
+
+  return id;
+}
+
 const EDITABLE = new Set(TYPES.map((t) => t.type));
 
 const plainText = (node) =>
@@ -767,6 +845,44 @@ function representable(node) {
   if (node.tag === "table") return true;
 
   return EDITABLE.has(node.tag) && plainText(node);
+}
+
+function addIdControl(block) {
+  const tag = document.createElement("button");
+  tag.className = "idtag";
+  tag.tabIndex = -1;
+  tag.textContent = blockAttrs(block).id ? `#${blockAttrs(block).id}` : "#";
+  tag.title = "Give this block an address, so it can be watched";
+
+  const input = document.createElement("input");
+  input.className = "idinput";
+  input.placeholder = "id";
+  input.hidden = true;
+  input.value = blockAttrs(block).id || "";
+
+  const show = () => {
+    input.hidden = false;
+    // Suggested, not applied. Nothing is written until the author leaves
+    // the field, so an accidental click costs nothing.
+    if (!input.value) input.value = suggestId(block);
+    input.focus();
+  };
+
+  const settle = () => {
+    const id = setBlockId(block, input.value);
+    input.value = id;
+    tag.textContent = id ? `#${id}` : "#";
+    input.hidden = true;
+  };
+
+  tag.addEventListener("click", (event) => { event.preventDefault(); show(); });
+  input.addEventListener("blur", settle);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === "Escape") settle();
+  });
+
+  block.appendChild(tag);
+  block.appendChild(input);
 }
 
 // The reverse, for editing a page that already exists.
