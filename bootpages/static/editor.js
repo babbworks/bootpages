@@ -15,6 +15,7 @@ const TYPES = [
 ];
 
 const PLACEHOLDER = {
+  kept: "Kept as it was written",
   p: "Write something…",
   h3: "Heading",
   h4: "Subheading",
@@ -444,10 +445,26 @@ for (const header of [titleField, bylineField]) {
 
 // ---------------------------------------------------------------- blocks
 
-function makeBlock(type = "p", text = "", at = null) {
+// Attributes and whole nodes the editor cannot draw are carried on the
+// block and written back untouched.
+//
+// Before this, a round trip through the editor DESTROYED them: fromNodes
+// read tag and text, toNodes wrote tag and text, and everything else was
+// silently gone. Opening a page with `require-role: finance` and pressing
+// save published it to everyone - a gate failing OPEN, with no error and
+// nothing to notice.
+function makeBlock(type = "p", text = "", at = null, keep = null) {
   const block = document.createElement("div");
   block.className = "block";
   block.dataset.type = type;
+
+  if (keep && keep.attrs && Object.keys(keep.attrs).length) {
+    block.dataset.attrs = JSON.stringify(keep.attrs);
+  }
+
+  if (keep && keep.node) {
+    block.dataset.node = JSON.stringify(keep.node);
+  }
 
   const plus = document.createElement("button");
   plus.className = "plus";
@@ -662,30 +679,53 @@ function toNodes() {
     const text = block.querySelector("textarea").value;
 
     if (type !== "li") list = null;
+
+    // Written back exactly as it arrived. Never skipped for being
+    // "empty": a node the editor cannot draw has no text of its own.
+    if (type === "kept") {
+      nodes.push(JSON.parse(block.dataset.node));
+      continue;
+    }
+
     if (type !== "hr" && !text.trim()) continue;
+
+    const attrs = block.dataset.attrs ? JSON.parse(block.dataset.attrs) : null;
+    const withAttrs = (node) => (attrs ? {...node, attrs} : node);
 
     if (type === "li") {
       if (!list) { list = {tag: "ul", children: []}; nodes.push(list); }
-      list.children.push({tag: "li", children: [text]});
+      list.children.push(withAttrs({tag: "li", children: [text]}));
     } else if (type === "hr") {
-      nodes.push({tag: "hr", children: []});
+      nodes.push(withAttrs({tag: "hr", children: []}));
     } else if (type === "img") {
-      nodes.push({tag: "figure", children: [{tag: "img", attrs: {src: text.trim()}}]});
+      nodes.push(withAttrs(
+        {tag: "figure", children: [{tag: "img", attrs: {src: text.trim()}}]}));
     } else if (type === "table") {
       const rows = text.split("\n").filter((line) => line.trim());
       if (!rows.length) continue;
-      nodes.push({tag: "table", children: [{tag: "ul", children: rows.map((row) => ({
+      nodes.push(withAttrs({tag: "table", children: [{tag: "ul", children: rows.map((row) => ({
         tag: "li",
         children: [{tag: "ul", children: splitRow(row).map((cell) => ({
           tag: "li", children: [cell],
         }))}],
-      }))}]});
+      }))}]}));
     } else {
-      nodes.push({tag: type, children: [text]});
+      nodes.push(withAttrs({tag: type, children: [text]}));
     }
   }
 
   return nodes;
+}
+
+// A one-line description of a node the editor is holding but not editing,
+// so the author can see what is there rather than a blank.
+function summarise(node) {
+  const attrs = node.attrs || {};
+  const keys = Object.keys(attrs).sort();
+  const shown = keys.map((k) => `${k}: ${attrs[k]}`).join("  ");
+  const words = textOf(node).trim();
+
+  return [`<${node.tag}>`, shown, words].filter(Boolean).join("\n");
 }
 
 // Tabs first, because that is what a spreadsheet puts on the clipboard.
@@ -701,6 +741,34 @@ function splitRow(row) {
   return [row.trim()];
 }
 
+const EDITABLE = new Set(TYPES.map((t) => t.type));
+
+const plainText = (node) =>
+  (node.children || []).every((kid) => typeof kid === "string");
+
+// Whether a block can survive being turned into a textarea and back.
+//
+// Anything else is kept whole rather than flattened. The editor showing a
+// node it does not understand is a small cost; the editor silently
+// rewriting one is not.
+function representable(node) {
+  if (node.tag === "hr") return true;
+
+  if (node.tag === "ul") {
+    return (node.children || []).every(
+      (kid) => kid && kid.tag === "li" && plainText(kid));
+  }
+
+  if (node.tag === "figure") {
+    const kids = node.children || [];
+    return kids.length === 1 && kids[0] && kids[0].tag === "img";
+  }
+
+  if (node.tag === "table") return true;
+
+  return EDITABLE.has(node.tag) && plainText(node);
+}
+
 // The reverse, for editing a page that already exists.
 function fromNodes(nodes) {
   $("blocks").innerHTML = "";
@@ -710,17 +778,28 @@ function fromNodes(nodes) {
 
     const kids = node.children || [];
 
+    if (!representable(node)) {
+      // A module, a section carrying require-, anything nested. Shown so
+      // the author knows it is there, and written back byte for byte.
+      makeBlock("kept", summarise(node), null, {node});
+      continue;
+    }
+
+    const keep = {attrs: node.attrs || {}};
+
     if (node.tag === "ul") {
-      for (const item of kids) makeBlock("li", textOf(item));
+      for (const item of kids) {
+        makeBlock("li", textOf(item), null, {attrs: item.attrs || {}});
+      }
     } else if (node.tag === "figure") {
       const img = kids.find((k) => k && k.tag === "img");
-      makeBlock("img", img && img.attrs ? img.attrs.src : "");
+      makeBlock("img", img && img.attrs ? img.attrs.src : "", null, keep);
     } else if (node.tag === "hr") {
-      makeBlock("hr");
+      makeBlock("hr", "", null, keep);
     } else if (node.tag === "table") {
-      makeBlock("table", tableText(node));
+      makeBlock("table", tableText(node), null, keep);
     } else {
-      makeBlock(node.tag, textOf(node));
+      makeBlock(node.tag, textOf(node), null, keep);
     }
   }
 

@@ -31,8 +31,21 @@ function element(tag = "div", id = "") {
     style: {},
     classList: {add() {}, remove() {}},
     className: "",
-    innerHTML: "",
+    _innerHTML: "",
     textContent: "",
+
+    // A real setter, because editor.js clears the block list with
+    // `innerHTML = ""` and a plain property let stale blocks survive it -
+    // which made a round-trip test see nodes the page never had.
+    get innerHTML() { return this._innerHTML; },
+    set innerHTML(value) {
+      this._innerHTML = value;
+      if (value === "") {
+        for (const kid of this.children) kid.parentElement = null;
+        this.children = [];
+      }
+    },
+
     value: "",
     hidden: true,
     disabled: false,
@@ -296,3 +309,61 @@ console.log("editor.js runs, and block editing behaves:");
 console.log("  code block has an exit · ctrl+Enter works · down makes a block");
 console.log("  Enter splits · Backspace merges · dividers delete");
 console.log("  dividers move the cursor past them and keep any words");
+
+// ------------------------------------------------------------ round trip
+//
+// The bug this exists for: fromNodes read tag and text, toNodes wrote tag
+// and text, and everything else was silently discarded. Opening a page
+// that carried `require-role: finance` and pressing save republished it
+// with the gate removed - failing OPEN, with no error to notice.
+
+const original = [
+  {tag: "p", attrs: {id: "intro"}, children: ["Opening words."]},
+  {tag: "section", attrs: {"require-role": "finance", source: "https://x/y"},
+   children: [{tag: "p", attrs: {}, children: ["Fallback prose."]}]},
+  {tag: "gallery", attrs: {"prefer-layout": "grid, list"}, children: []},
+  {tag: "p", attrs: {}, children: ["Closing words."]},
+];
+
+context.fromNodes(original);
+const returned = context.toNodes();
+
+assert.equal(returned.length, original.length,
+  "a round trip must not add or drop nodes");
+
+assert.equal(returned[0].attrs && returned[0].attrs.id, "intro",
+  "an id must survive a round trip, or nothing published here is watchable");
+
+assert.equal(returned[1].tag, "section",
+  "a node the editor cannot draw must keep its tag");
+assert.equal(returned[1].attrs["require-role"], "finance",
+  "require- MUST survive: dropping it un-gates the section for everyone");
+assert.equal(returned[1].children[0].children[0], "Fallback prose.",
+  "its children must survive too, not be flattened into text");
+
+assert.equal(returned[2].attrs["prefer-layout"], "grid, list",
+  "an unknown tag's attributes must survive");
+
+// Compared the way the store compares: normalise() fills in an omitted
+// `attrs` on write, so a missing empty object is not a difference. What
+// must not differ is anything that would change the canonical bytes.
+const fill = (ns) => ns.map((n) => (typeof n === "string" ? n : {
+  tag: n.tag, attrs: n.attrs || {}, children: fill(n.children || []),
+}));
+
+assert.deepEqual(fill(returned), fill(original),
+  "a page that is opened and saved unchanged must come back identical");
+
+// Editing the text of an ordinary block must not disturb what it carries.
+context.fromNodes(original);
+document.getElementById("blocks").children[0]
+  .querySelector("textarea").value = "Rewritten.";
+const edited = context.toNodes();
+
+assert.equal(edited[0].children[0], "Rewritten.");
+assert.equal(edited[0].attrs.id, "intro",
+  "editing text must not drop the block's id");
+assert.deepEqual(fill([edited[1]]), fill([original[1]]),
+  "editing one block must not disturb another");
+
+console.log("  round trip keeps attributes, ids, and nodes it cannot draw");
