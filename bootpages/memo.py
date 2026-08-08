@@ -35,6 +35,11 @@ KEY = re.compile(r"^([a-z][a-z0-9-]*):[ \t]*(.*)$")
 
 HEADING = re.compile(r"^(#{1,6})[ \t]+(.*)$")
 
+# A divider. Three or more of any of them, which is what every writer of
+# Markdown already types, and unambiguous because prose does not begin a
+# line that way.
+RULE = re.compile(r"^\s*(-{3,}|\*{3,}|_{3,})\s*$")
+
 # Header fields that mean something to the store. Anything else in the
 # document header is refused rather than dropped, because a key that
 # silently does nothing is worse than one that is rejected: the author
@@ -67,6 +72,11 @@ def parse(source):
 
     while index < len(lines):
         if not lines[index].strip():
+            index += 1
+            continue
+
+        if RULE.match(lines[index]):
+            nodes.append({"tag": "hr", "attrs": {}, "children": []})
             index += 1
             continue
 
@@ -150,7 +160,7 @@ def _section(lines, index):
             index += 1
             continue
 
-        if HEADING.match(lines[index]):
+        if HEADING.match(lines[index]) or RULE.match(lines[index]):
             break
 
         paragraph, index = _paragraph(lines, index)
@@ -173,7 +183,7 @@ def _paragraph(lines, index):
     run = []
 
     while index < len(lines) and lines[index].strip():
-        if HEADING.match(lines[index]):
+        if HEADING.match(lines[index]) or RULE.match(lines[index]):
             break
 
         run.append(lines[index].strip())
@@ -288,6 +298,9 @@ def _emit(node):
 
     if _is_heading(node):
         return [_heading_line(node), ""]
+
+    if tag == "hr" and not node.get("attrs"):
+        return ["---", ""]
 
     if tag == "p" and not node.get("attrs"):
         return [_text(children), ""]
